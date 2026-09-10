@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vampire-Core Wasm</title>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!--
+      Emscripten glue, built by `make wasm` into web/public/.
+      MODULARIZE=1 makes this a classic script that defines the global factory
+      window.CoreEngineModule(). Classic scripts run before deferred module
+      scripts, so the global is ready by the time React mounts below.
+      If the file is missing (core not built yet) this 404s harmlessly and the
+      app renders its "Wasm not loaded" state.
+    -->
+    <script src="/core_engine.js"></script>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
