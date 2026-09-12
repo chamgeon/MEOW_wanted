@@ -28,7 +28,7 @@ you have to run it again.
 ## 3. Build the Wasm module
 
 ```powershell
-cd D:\GitHub\AIcpp\vampire-core-wasm
+cd D:\GitHub\wanted_demo\vampire-core-wasm
 powershell -ExecutionPolicy Bypass -File .\build-wasm.ps1
 ```
 
@@ -45,7 +45,7 @@ Git Bash / WSL, where the default generator is Unix Makefiles.)
 ## 4. Start the client
 
 ```powershell
-cd D:\GitHub\AIcpp\vampire-core-wasm\web
+cd D:\GitHub\wanted_demo\vampire-core-wasm\web
 npm install
 npm run dev
 ```

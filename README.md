@@ -59,7 +59,7 @@ Get-Command em++     # 경로가 출력되면 OK
 ### 4. Wasm 빌드
 
 ```powershell
-cd D:\GitHub\AIcpp\vampire-core-wasm
+cd D:\GitHub\wanted_demo\vampire-core-wasm
 .\build-wasm.ps1
 ```
 

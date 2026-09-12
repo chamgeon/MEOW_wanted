@@ -1,2 +1,66 @@
-vampire-core-wasm/core/AppInstaller.msixbundle
-vampire-core-wasm/core/
+# =============================================================
+#  Vampire-Core Wasm - repository ignore rules
+#
+#  NOTE: do NOT blanket-ignore vampire-core-wasm/core/.
+#  That directory holds the C++ engine sources (include/, src/,
+#  CMakeLists.txt). Ignore only the vendored toolchain and the
+#  build output directories that live underneath it.
+# =============================================================
+
+# ---- Vendored Emscripten SDK -------------------------------
+# Installed locally, not committed. Bootstrap with:
+#   git clone https://github.com/emscripten-core/emsdk vampire-core-wasm/core/emsdk
+#   cd vampire-core-wasm/core/emsdk && ./emsdk install latest && ./emsdk activate latest
+# It also carries its own .git/, so committing it would create a
+# broken nested repository.
+vampire-core-wasm/core/emsdk/
+
+# ---- CMake build trees -------------------------------------
+vampire-core-wasm/core/build/
+vampire-core-wasm/core/build-native/
+vampire-core-wasm/core/build-wasm/
+build/
+build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.obj
+*.o
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+
+# ---- Large binaries / installers ---------------------------
+*.msixbundle
+
+# ---- Frontend ----------------------------------------------
+node_modules/
+vampire-core-wasm/web/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ---- Backend -----------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ---- Secrets -----------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS ----------------------------------------------
+.idea/
+.vs/
+.vscode/
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini
