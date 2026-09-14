@@ -16,19 +16,36 @@ the uvicorn log.
 
 from typing import Any
 
+import analyze
+
 SYSTEM_PROMPT = """\
 You are a senior C++ game engine programmer and systems performance architect.
 You specialize in Data-Oriented Design (DOD), CPU cache optimization, SIMD vectorization,
 and spatial partitioning algorithms (QuadTree, BVH, spatial hashing).
 
 You will receive:
+- A computed findings block: marker A/B comparisons, spike ratios, aura
+  correlation, renderer share and budget pressure, all calculated by the server
+  from the series. These are arithmetic, already done and already checked - do
+  not recompute them, do not contradict them, and do not restate a trend in
+  vaguer terms than the block states it. They are measurements only; the block
+  deliberately draws no conclusion about which mode to use, and that judgement
+  is yours to make from them plus the code. When a finding says a comparison is
+  uncontrolled or absent, that constraint is binding: do not manufacture the
+  comparison it says the data does not support.
 - A 1 Hz telemetry series from a live WebAssembly run: per-second FPS, C++ tick
   time as a distribution (mean/p50/p95/p99/max), total JS frame time, entity
   count, and the collision + memory mode and spawn distribution that were
   active for that second
 - Markers recording exactly when a mode, the distribution, or the entity count
   was toggled
-- The active C++ code path (collision + memory mode)
+- The active C++ source, read from the repository at request time: the real
+  functions, with exact file paths and line numbers. Cite them. A claim about
+  the kernel should name the line it is about. Note that the repulsion function
+  contains BOTH memory layouts behind an `if (memoryMode_ == ...)` branch - only
+  the branch matching the active memory mode ran, so do not attribute cost to
+  the other one. If a fallback notice says only a paraphrased snippet was
+  available, do NOT cite line numbers and do not claim to have read the file.
 - Modes: Collision [BruteForce | QuadTree], Memory [AoS | SoA]
 - Spawn distribution [Uniform | Clustered]. This is the scenario, not a tunable:
   Uniform scatters enemies evenly over the 2000x2000 world, Clustered packs them
@@ -64,37 +81,106 @@ How to read the telemetry, because this is where the diagnosis is made:
   simulation. Say so plainly rather than optimizing C++ that is not the problem.
 - Compare across a marker when one is present: the seconds either side of a
   toggle are a controlled A/B on the same machine, and are stronger evidence
-  than any single number.
+  than any single number. The findings block has already done this comparison
+  and excluded the sample that straddles the toggle; use its numbers rather than
+  reading the two spans off the table yourself.
 
-Your response MUST:
-1. Diagnose the precise architectural bottleneck (cache misses, O-complexity,
-   branch mispredictions, memory bandwidth), citing specific numbers from the
-   series rather than generic reasoning
-2. Provide a concrete C++ refactoring or alternative - show a diff or rewritten snippet
-3. Quantify the expected impact (cache-line utilization %, algorithmic complexity, expected FPS gain)
-4. End with the Recommended Configuration block, exactly in the format below.
-   It is parsed by machine to drive a runtime mode swap, so emit the field
-   names verbatim, one per line, with no extra prose inside the block.
-5. Stay under 400 words - no generic advice, no fluff
+Your response is a JSON object matching the schema you were given. There is no
+prose wrapper, no markdown headings, and no code fences anywhere in it.
 
-Output format (strict):
-## Bottleneck Diagnosis
-<technical root cause, citing numbers from the series>
+Field by field:
 
-## Optimized C++ Snippet
-```cpp
-<refactored code>
-```
+- diagnosis: the precise architectural bottleneck (cache misses, O-complexity,
+  branch mispredictions, memory bandwidth). Name the mechanism and the line it
+  lives on. Under 150 words.
 
-## Expected Impact
-<quantified reasoning>
+- evidence: the specific numbers the diagnosis rests on, one claim per entry,
+  each quoting a figure from the computed findings or the table. An entry that
+  contains no number is not evidence and does not belong here.
 
-## Recommended Configuration
-collision: <BruteForce|QuadTree>
-memory: <AoS|SoA>
-confidence: <high|medium|low>
-reason: <one sentence, under 120 characters>
+- patch: the edit you want made, or null if the right answer is a mode change
+  rather than a code change. This is applied by machine, so:
+    * file must be one of the paths shown to you, copied exactly.
+    * old_str must be copied VERBATIM from the source above -- byte for byte,
+      including indentation and comments. It is matched literally against the
+      file on disk. If it does not appear exactly once, the patch is rejected
+      and your work is discarded, so quote enough surrounding lines to be
+      unique and do not retype from memory, reformat, or tidy it.
+    * new_str is what replaces it. Compilable C++ consistent with the
+      surrounding code, using only names that already exist in the files shown.
+    * Prefer one surgical edit over a rewrite of a whole function. A large
+      old_str is more likely to be misquoted, and a misquoted patch is worth
+      nothing at all.
+    * Return null rather than inventing an edit. A null patch with a good
+      diagnosis is a useful answer; a patch that does not apply is not.
+
+- expected_impact: quantified -- cache-line utilisation, algorithmic
+  complexity, expected ms or FPS change -- and reasoned from the numbers in
+  evidence rather than asserted.
+
+- recommendation: the configuration to run, machine-parsed to drive a runtime
+  mode swap. collision and memory must be exactly one of the listed values.
+  Set confidence to low when the findings block says the window holds no
+  controlled comparison, and say why in reason.
+
+Two standing rules:
+- Do not propose a change the source already makes. You are reading the real
+  file, so recommending an allocation be hoisted when it is already hoisted, or
+  a check added that is already there, is a factual error about code you were
+  shown.
+- Do not manufacture a comparison the findings block says the data does not
+  support.
 """
+
+# ---------------------------------------------------------------------------
+# The response schema, enforced by output_config.format rather than by asking
+# politely for JSON in the prompt.
+#
+# Every field is required, because the strict json_schema format has no notion
+# of an optional key -- absence is expressed as an explicit null in a nullable
+# type, which is a distinction worth keeping: "the model chose not to propose a
+# patch" and "the model forgot the field" should not look the same to the parser.
+#
+# collision/memory/confidence are constrained by enum here AND validated again in
+# main.py. That is not redundant. The enum makes a malformed value unlikely; the
+# server-side check makes acting on one impossible, and it is the server-side
+# check that protects the embind call, where a bad mode string is a wasm crash
+# rather than a bad answer.
+# ---------------------------------------------------------------------------
+OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "diagnosis":       {"type": "string"},
+        "evidence":        {"type": "array", "items": {"type": "string"}},
+        "expected_impact": {"type": "string"},
+        "patch": {
+            "type": ["object", "null"],
+            "properties": {
+                "file":      {"type": "string"},
+                "symbol":    {"type": "string"},
+                "old_str":   {"type": "string"},
+                "new_str":   {"type": "string"},
+                "rationale": {"type": "string"},
+            },
+            "required": ["file", "symbol", "old_str", "new_str", "rationale"],
+            "additionalProperties": False,
+        },
+        "recommendation": {
+            "type": "object",
+            "properties": {
+                "collision":  {"type": "string", "enum": ["BruteForce", "QuadTree"]},
+                "memory":     {"type": "string", "enum": ["AoS", "SoA"]},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "reason":     {"type": "string"},
+            },
+            "required": ["collision", "memory", "confidence", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["diagnosis", "evidence", "expected_impact", "patch", "recommendation"],
+    "additionalProperties": False,
+}
+
 
 # Column widths chosen so a 10,000-entity run at 8 ms with a 3-digit frame count
 # still lines up. Misaligned columns defeat the entire point of using a table.
@@ -201,6 +287,13 @@ def build_user_prompt(
     # Keyword-compatible default for the same reason _mode_tag has one: a client
     # built before this axis existed was, by construction, running Uniform.
     spawn_distribution: str = "Uniform",
+    # Real source, rendered by sources.render(). When present it REPLACES both
+    # the client's code_snippet and aura_snippet rather than joining them: the
+    # bundle already contains fireAura and the real kernel, and showing the
+    # model two versions of the same function would make it spend its budget
+    # reconciling them -- and the paraphrase would lose, so the only effect is
+    # cost. Empty string and None both mean "extraction produced nothing".
+    source_bundle: str | None = None,
 ) -> str:
     parts = [
         "Current Configuration:\n"
@@ -214,6 +307,12 @@ def build_user_prompt(
 
     table = format_telemetry(telemetry)
     if table:
+        # Findings first, table second. The table is evidence the model can check
+        # the findings against; putting it first would mean thirty rows of
+        # numbers arrive before anything says what to look for in them.
+        computed = analyze.render(analyze.analyze(telemetry))
+        if computed:
+            parts.append(computed)
         parts.append(table)
     else:
         # Said explicitly. Otherwise the model has no way to distinguish a run
@@ -226,21 +325,43 @@ def build_user_prompt(
             "conclusive."
         )
 
-    # The distribution is named in the heading but the snippet is unchanged by
-    # it, and saying so is load-bearing: it forecloses the reading where the
-    # model attributes a cost difference across a distribution marker to some
-    # branch it assumes exists in code it has not been shown.
-    parts.append(
-        f"Active Code Snippet ({collision_mode} / {memory_mode}, running on a "
-        f"{spawn_distribution} world -- the source below is identical under both "
-        f"distributions):\n```cpp\n{code_snippet}\n```"
-    )
-
-    if aura_snippet:
+    if source_bundle:
+        # The distribution is named in the bundle header but the source is
+        # unchanged by it, and saying so is load-bearing: it forecloses the
+        # reading where the model attributes a cost difference across a
+        # distribution marker to some branch it assumes exists in code it has
+        # not been shown.
+        parts.append(source_bundle)
         parts.append(
-            "Aura pulse, which runs identically in both collision modes and "
-            f"fires once every 2.0 s:\n```cpp\n{aura_snippet}\n```"
+            "The source above is identical under both spawn distributions; "
+            "there is no distribution-dependent branch in it. A cost difference "
+            "across a distribution marker is the spatial field changing, not the "
+            "code."
         )
+    else:
+        # Stated, not silently degraded. The system prompt tells the model to
+        # cite line numbers; if extraction failed it is about to be handed a
+        # paraphrase with no line numbers in it, and a model that has been asked
+        # for citations and given none will invent them.
+        parts.append(
+            "NOTE: the repository source was not available to this request, so "
+            "the block below is the frontend's illustrative paraphrase, not the "
+            "code as written. Its inner loops are abbreviated and some bodies "
+            "are replaced by comments. Do not cite line numbers from it, do not "
+            "claim to have read the file, and treat the absence of a detail as "
+            "unknown rather than as evidence the code omits it."
+        )
+        parts.append(
+            f"Active Code Snippet ({collision_mode} / {memory_mode}, running on a "
+            f"{spawn_distribution} world -- the source below is identical under both "
+            f"distributions):\n```cpp\n{code_snippet}\n```"
+        )
+
+        if aura_snippet:
+            parts.append(
+                "Aura pulse, which runs identically in both collision modes and "
+                f"fires once every 2.0 s:\n```cpp\n{aura_snippet}\n```"
+            )
 
     parts.append("Diagnose the bottleneck and show the optimized refactoring.")
     return "\n\n".join(parts)
