@@ -8,6 +8,7 @@
   --green:   #4caf50;
   --orange:  #f5a623;
   --red:     #e05050;
+  --cyan:    #6fd3e0;
   --text:    #ddd;
   --text2:   #888;
   font-family: 'Segoe UI', system-ui, sans-serif;
@@ -38,6 +39,23 @@
 }
 .toggle-btn.on { border-color: var(--accent); color: var(--text); background: #1e1530; }
 .toggle-btn strong { color: var(--accent); }
+.toggle-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* The scenario toggle. Cyan, and with no ".on" state, because neither
+   distribution is the preferred one: the two mode toggles light up purple to
+   mean "the fast path is selected", and reusing that here would claim Clustered
+   is an optimization when it is simply a harder workload. Cyan says "different
+   axis". */
+.dist-btn { border-color: #2a4a52; }
+.dist-btn strong { color: var(--cyan); }
+.dist-btn.clustered { border-color: var(--cyan); color: var(--text); background: #0c2126; }
+
+/* Pause gets orange rather than the accent purple the mode toggles use. Those
+   two select a configuration; this one suspends it, and colouring it the same
+   would read as a third algorithm switch. */
+.pause-btn { display: flex; align-items: center; gap: .4rem; }
+.pause-btn.paused { border-color: var(--orange); color: var(--orange); background: #241a06; }
+.pause-btn kbd { font-size: .62rem; opacity: .65; }
 
 .hud { display: flex; gap: 1rem; font-size: .85rem; margin-left: auto; }
 .hud span { padding: .2rem .5rem; background: var(--bg); border-radius: 4px; }
@@ -45,15 +63,58 @@
 .hud-bad  { color: var(--red); }
 .hud-warn { color: var(--orange); font-size: .8rem; }
 .hud-warn code { background: #2a1a00; padding: .1rem .3rem; border-radius: 3px; }
+/* Kills is the only HUD field the player drives directly, so it reads in the
+   aura's colour rather than the neutral text colour. */
+.hud-kills { color: #9dbcff; }
+.hud-paused {
+  color: var(--orange); font-weight: 600; letter-spacing: .08em; font-size: .75rem;
+  background: #241a06 !important; border: 1px solid #4a3a1a;
+}
 
 /* Body */
 .app-body { display: flex; flex: 1; overflow: hidden; }
 
-/* Canvas */
-.game-canvas {
-  display: block; background: #0a0a0f;
+/* Stage: canvas + the control hint that explains what the aura ring is.
+   Without the hint the pulsing circle reads as a rendering artefact. */
+.stage {
+  display: flex; flex-direction: column; flex-shrink: 0;
   border-right: 1px solid var(--border);
-  flex-shrink: 0;
+}
+/* position:relative only so the pause overlay has something to anchor to.
+   line-height:0 keeps the inline canvas from adding a descender gap that would
+   leave a 4 px stripe of background below the overlay. */
+.stage-canvas { position: relative; flex-shrink: 0; line-height: 0; }
+.game-canvas { display: block; background: #0a0a0f; flex-shrink: 0; }
+
+/* Dim rather than hide: the frozen field is the thing worth looking at while
+   paused, so the scrim only has to make the label legible over it. */
+.stage-paused {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
+  background: rgba(10, 10, 15, .45);
+  line-height: 1.4; pointer-events: none;
+}
+.stage-paused-tag {
+  font-size: 1.6rem; font-weight: 700; letter-spacing: .25em;
+  color: var(--orange); text-shadow: 0 2px 12px rgba(0, 0, 0, .9);
+}
+.stage-paused-note {
+  font-size: .72rem; color: #c9a86a; letter-spacing: .04em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
+}
+.stage-help {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: .45rem .7rem; font-size: .75rem; color: var(--text2);
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.stage-help span { display: flex; align-items: center; gap: .25rem; }
+.stage-help-aura { color: #7f9fd0; }
+kbd {
+  display: inline-block; min-width: 1.4rem; text-align: center;
+  padding: .1rem .3rem; font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: .7rem; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 3px;
 }
 
 /* Sidebar */
@@ -66,10 +127,40 @@
 .metric-graph { padding: .6rem; border-bottom: 1px solid var(--border); }
 .metric-graph h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .3rem; }
 
+/* Telemetry readout -- what the 1 Hz logger last wrote. */
+.telemetry { padding: .6rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.telemetry-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .4rem; }
+.telemetry-head h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
+.telemetry-head button {
+  padding: .2rem .55rem; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--text2); cursor: pointer; font-size: .7rem; transition: all .15s;
+}
+.telemetry-head button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.telemetry-head button:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Two columns: label, value. A monospace value column keeps the digits from
+   dancing as the numbers change once a second. */
+.telemetry-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: .15rem .6rem;
+  font-size: .72rem; align-items: baseline;
+}
+.telemetry-grid span { color: var(--text2); }
+.telemetry-grid b {
+  font-weight: 500; color: var(--text);
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-variant-numeric: tabular-nums;
+}
+.telemetry-grid b.hud-good { color: var(--green); }
+.telemetry-grid b.hud-bad  { color: var(--red); }
+.telemetry-empty { font-size: .72rem; color: var(--text2); font-style: italic; }
+
 /* CodePanel */
 .code-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: .6rem; gap: .5rem; }
 .code-panel-header { display: flex; align-items: center; justify-content: space-between; }
 .code-panel-header h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
+/* Not uppercase like the rest of the heading: the distribution is context for
+   the code path, not part of its name. */
+.code-panel-header h3 .code-panel-dist { color: var(--cyan); text-transform: none; letter-spacing: 0; }
 .code-panel-header button {
   padding: .25rem .7rem; border: 1px solid var(--accent); border-radius: 4px;
   background: transparent; color: var(--accent); cursor: pointer; font-size: .8rem; transition: all .15s;
@@ -82,6 +173,19 @@
   border-radius: 4px; padding: .6rem; font-size: .75rem; line-height: 1.5;
   color: #b0c4de; font-family: 'Cascadia Code', 'Consolas', monospace;
 }
+
+/* The agent's parsed verdict. Colour-coded by whether it agrees with the
+   running configuration, because a disagreement is the actionable case. */
+.recommendation {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .6rem;
+  border-radius: 4px; padding: .45rem .6rem; font-size: .75rem;
+}
+.recommendation strong { font-weight: 600; }
+.rec-agree  { background: #0d1a0d; border: 1px solid #2a4a2a; color: #9dc89d; }
+.rec-differ { background: #1f1608; border: 1px solid #4a3a1a; color: #e0c080; }
+.rec-conf { text-transform: uppercase; letter-spacing: .05em; font-size: .65rem; opacity: .8; }
+.rec-note { color: var(--text2); font-size: .7rem; }
+.rec-reason { flex-basis: 100%; margin: 0; font-size: .72rem; line-height: 1.45; opacity: .9; }
 
 .analysis {
   background: #0d1a0d; border: 1px solid #2a4a2a; border-radius: 4px; padding: .6rem;

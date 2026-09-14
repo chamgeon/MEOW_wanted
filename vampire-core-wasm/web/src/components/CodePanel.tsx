@@ -1,11 +1,41 @@
 import { useState } from 'react';
-import type { PerfSample, CollisionMode, MemoryMode } from '../App';
+import type { PerfSample, CollisionMode, MemoryMode, SpawnDist } from '../App';
+import type { PerfLogger } from '../logging/PerfLogger';
 
 interface Props {
   stats?:        PerfSample;
   collisionMode: CollisionMode;
   memoryMode:    MemoryMode;
+  /** Which world the kernel is running against. Not a code path -- the snippet
+   *  below is byte-identical in both -- but without it the agent sees two
+   *  wildly different query costs for the same source and has no way to
+   *  attribute the difference to anything but noise. */
+  spawnDist:     SpawnDist;
+  /** Source of the telemetry series posted with the analysis request. The
+   *  single-sample HUD numbers below are kept for backwards compatibility with
+   *  the original endpoint contract, but the series is what actually lets the
+   *  agent tell a slow kernel from a spiky one. */
+  logger:        PerfLogger;
 }
+
+/** The machine-parsed half of the optimizer's reply. Every field is optional
+ *  because the server returns nulls rather than guesses when the block fails
+ *  to parse -- acting on a fabricated mode would be worse than acting on none. */
+interface Recommendation {
+  collision?:  CollisionMode | null;
+  memory?:     MemoryMode    | null;
+  confidence?: string        | null;
+  reason?:     string        | null;
+}
+
+// How much history travels with an analysis request.
+//
+// Thirty seconds is roughly the span in which a user toggles a mode, watches
+// the number move, and toggles back -- so the window usually contains both
+// sides of a comparison plus the marker that separates them. A full session
+// would be mostly redundant and would push the prompt into territory where the
+// model starts skimming rather than reading.
+const TELEMETRY_WINDOW_S = 30;
 
 const SNIPPETS: Record<CollisionMode, Record<MemoryMode, string>> = {
   BruteForce: {
@@ -74,16 +104,44 @@ for (int i = 0; i < n; ++i) {
   },
 };
 
-export default function CodePanel({ stats, collisionMode, memoryMode }: Props) {
+// The aura runs in both modes and is a flat linear scan by design, so it is
+// part of the cost the agent is being asked to explain. Shipping the snippet
+// stops it from attributing aura time to the repulsion kernel above.
+const AURA_SNIPPET = `// Aura pulse, fired every Config::AURA_INTERVAL (2.0 s).
+// Deliberately a linear scan in BOTH collision modes: reusing the QuadTree
+// would read pre-repulsion positions and make the two modes disagree on the
+// kill set, which would break the AoS/SoA equivalence check.
+void EngineCore::fireAura() {
+  const float rSq = Config::AURA_RADIUS * Config::AURA_RADIUS;
+  for (int i = 0; i < n; ++i) {
+    if (!alive[i]) continue;
+    float dx = posX[i] - playerPos_.x;
+    float dy = posY[i] - playerPos_.y;
+    float d2 = dx*dx + dy*dy;
+    if (d2 > rSq) continue;
+    health[i] -= Config::AURA_DAMAGE;
+    // knockback along the normalised (dx, dy)
+    if (health[i] <= 0.f) alive[i] = 0;
+  }
+}`;
+
+export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist, logger }: Props) {
   const [analysis, setAnalysis] = useState('');
+  const [rec,      setRec]      = useState<Recommendation | null>(null);
   const [loading,  setLoading]  = useState(false);
 
   const snippet = SNIPPETS[collisionMode][memoryMode];
+
+  // The endpoint accepts a request with no telemetry (that was the original
+  // contract), so the button stays usable during the first second of a run --
+  // it just sends less evidence, and says so in the prompt.
+  const recordCount = logger.getRecords().length;
 
   const runAnalysis = async () => {
     if (!stats) return;
     setLoading(true);
     setAnalysis('');
+    setRec(null);
     try {
       const res = await fetch('/api/optimize', {
         method:  'POST',
@@ -91,12 +149,16 @@ export default function CodePanel({ stats, collisionMode, memoryMode }: Props) {
         body: JSON.stringify({
           fps: stats.fps, frameTimeMs: stats.simMs,
           entityCount: stats.entities, collisionMode, memoryMode,
+          spawnDistribution: spawnDist,
           codeSnippet: snippet,
+          auraSnippet: AURA_SNIPPET,
+          telemetry: logger.window(TELEMETRY_WINDOW_S),
         }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setAnalysis(data.analysis);
+      setRec(data.recommendation ?? null);
     } catch (e: unknown) {
       setAnalysis(`Error: ${e instanceof Error ? e.message : 'unreachable backend'}`);
     } finally {
@@ -104,15 +166,38 @@ export default function CodePanel({ stats, collisionMode, memoryMode }: Props) {
     }
   };
 
+  // Shown separately from the prose so the verdict is legible at a glance, and
+  // so it is obvious when the agent's pick differs from what is running now --
+  // that disagreement is the whole point of the panel.
+  const agrees = rec !== null
+    && (!rec.collision || rec.collision === collisionMode)
+    && (!rec.memory    || rec.memory    === memoryMode);
+
   return (
     <div className="code-panel">
       <div className="code-panel-header">
-        <h3>Active Code Path &mdash; {collisionMode} / {memoryMode}</h3>
+        {/* The spawn distribution is named here even though it changes nothing
+            in the snippet below, because the panel's claim is "this is what is
+            producing the numbers" -- and at fixed source, the world is half
+            of that. */}
+        <h3>Active Code Path &mdash; {collisionMode} / {memoryMode} <span className="code-panel-dist">on {spawnDist}</span></h3>
         <button onClick={runAnalysis} disabled={loading || !stats}>
-          {loading ? 'Analyzing...' : 'AI Analyze'}
+          {loading ? 'Analyzing...' : `AI Analyze (${recordCount}s)`}
         </button>
       </div>
       <pre className="code-snippet"><code>{snippet}</code></pre>
+      {rec && (
+        <div className={`recommendation ${agrees ? 'rec-agree' : 'rec-differ'}`}>
+          <strong>
+            Recommends: {rec.collision ?? collisionMode} / {rec.memory ?? memoryMode}
+          </strong>
+          {rec.confidence && <span className="rec-conf">{rec.confidence} confidence</span>}
+          {agrees
+            ? <span className="rec-note">matches the running configuration</span>
+            : <span className="rec-note">differs from what is running</span>}
+          {rec.reason && <p className="rec-reason">{rec.reason}</p>}
+        </div>
+      )}
       {analysis && (
         <div className="analysis">
           <h4>AI Analysis</h4>

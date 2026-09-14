@@ -1,6 +1,7 @@
 #pragma once
 #include "Config.h"
 #include "EnemyAoS.h"   // AIState, StatusBit -- shared by both layouts
+#include "Spawn.h"
 #include <cstdint>
 #include <vector>
 
@@ -40,6 +41,9 @@ struct EnemyContainerSoA {
     std::vector<float> contactDamage, attackCooldown, hitFlashTimer;
 
     // --- AI state machine -----------------------------------------------------
+    // targetX/targetY are HOME points (see the note in EnemyAoS.h): persistent
+    // per-entity state that decides where an out-of-aggro enemy holds station,
+    // which is what lets a spawn distribution survive long enough to benchmark.
     std::vector<float>   stateTimer, targetX, targetY, aggroRange;
     std::vector<uint8_t> aiState;
 
@@ -65,9 +69,15 @@ struct EnemyContainerSoA {
 
     int size = 0;
 
-    void init(int count, uint32_t seed = 1337u);
-    void update(float dt, float playerX, float playerY);
+    // Same spawn set the AoS container is given -- see EnemyContainerAoS::init.
+    void init(const std::vector<SpawnSample>& spawn);
+    void update(float dt, float simTime, float playerX, float playerY);
     int  aliveCount() const;
+
+    // Mirror of EnemyContainerAoS::respawn -- same fields, same values, same
+    // order. See the comment there for why the random inputs are arguments.
+    void respawn(int i, float x, float y, float homeX, float homeY,
+                 float stateTimerSeed, float animTimerSeed);
 
     const float* posXPtr() const { return posX.data(); }
     const float* posYPtr() const { return posY.data(); }

@@ -15,6 +15,12 @@ const W = 800, H = 600;
 const WORLD_W = 2000, WORLD_H = 2000;
 const SX = W / WORLD_W, SY = H / WORLD_H;
 
+const TAU = Math.PI * 2;
+
+// Mirrors Config::AURA_FLASH_TIME. Only used to normalise the flash timer into
+// a 1 -> 0 ramp for the fade; the cadence itself is entirely the engine's.
+const AURA_FLASH_TIME = 0.30;
+
 // Enemy colour, premultiplied into a 32-bit little-endian ABGR word once.
 const ENEMY_RGBA = (255 << 24) | (0x50 << 16) | (0x50 << 8) | 0xe0;  // #e05050
 const BG_RGBA    = (255 << 24) | (0x0f << 16) | (0x0a << 8) | 0x0a;  // #0a0a0f
@@ -84,6 +90,55 @@ export default function GameCanvas({ engine, module, wasmReady, apiRef }: Props)
       }
 
       ctx.putImageData(image, 0, 0);
+
+      // --- player + aura, drawn with Canvas2D paths on top of the blit -------
+      //
+      // The entity field is written as raw pixels because there are 10,000 of
+      // them and path ops would dominate the frame. There are exactly two
+      // things here, so paths are free and buy proper anti-aliased circles.
+      // putImageData ignores the existing canvas contents, so this must come
+      // after it or it would be erased.
+      const px = eng.getPlayerX() * SX;
+      const py = eng.getPlayerY() * SY;
+      const ar = eng.getAuraRadius() * SX;
+
+      // Charge ring: opacity ramps from nothing to full over the 2 s cadence,
+      // so the pulse is readable as an approaching event rather than an
+      // unexplained flash. Phase comes from the engine, not a JS timer -- a
+      // separate timer would drift out of step the moment a frame is dropped,
+      // which is precisely when the demo is under the load worth watching.
+      const phase = eng.getAuraPhase();
+      ctx.beginPath();
+      ctx.arc(px, py, ar, 0, TAU);
+      ctx.strokeStyle = `rgba(150,190,255,${0.08 + 0.30 * phase})`;
+      ctx.lineWidth = 1 + 1.5 * phase;
+      ctx.stroke();
+
+      // Pulse flash: a bright ring that expands and fades over AURA_FLASH_TIME.
+      const flash = eng.getAuraFlash();
+      if (flash > 0) {
+        const k = flash / AURA_FLASH_TIME;          // 1 -> 0
+        ctx.beginPath();
+        ctx.arc(px, py, ar * (1 + 0.12 * (1 - k)), 0, TAU);
+        ctx.strokeStyle = `rgba(210,235,255,${0.85 * k})`;
+        ctx.lineWidth = 3 * k + 1;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(px, py, ar, 0, TAU);
+        ctx.fillStyle = `rgba(120,170,255,${0.12 * k})`;
+        ctx.fill();
+      }
+
+      // Player: a white dot. Given a dark red enemy field, white is the only
+      // fill that stays findable when a few thousand enemies pile onto it.
+      ctx.beginPath();
+      ctx.arc(px, py, 5, 0, TAU);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     };
 
     apiRef.current = { draw };

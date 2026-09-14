@@ -1,6 +1,7 @@
 #pragma once
 #include "Vector2D.h"
 #include "Config.h"
+#include "Spawn.h"
 #include <cstdint>
 #include <vector>
 
@@ -62,8 +63,20 @@ struct EnemyAoS {
 
     // --- AI state machine ----------------------------------------------------
     float    stateTimer;       //  4  seconds remaining in the current state
-    float    targetX;          //  4  where it is steering (player, or wander pt)
-    float    targetY;          //  4
+    // HOME POINT -- the coordinate this enemy holds station around whenever the
+    // player is further away than aggroRange. It is persistent state, written
+    // once at spawn and read every tick thereafter.
+    //
+    // These two fields used to be scratch: update() wrote the player's position
+    // into them and read it back three lines later, which is a local variable
+    // wearing a struct field's clothes. Giving them a real job is what buys the
+    // spawn-distribution axis for ZERO extra bytes per entity -- sizeof is still
+    // 128 and the cache-cliff arithmetic at the top of this file still holds.
+    float    targetX;          //  4  home point x
+    float    targetY;          //  4  home point y
+    // Read every tick (it decides chase vs. hold). It was previously assigned
+    // 600 at spawn and never looked at again, so the field was dead weight in a
+    // struct whose whole argument is about how much weight it carries.
     float    aggroRange;       //  4
 
     // --- status effects ------------------------------------------------------
@@ -106,7 +119,35 @@ namespace StatusBit {
 struct EnemyContainerAoS {
     std::vector<EnemyAoS> enemies;
 
-    void init(int count, uint32_t seed = 1337u);
-    void update(float dt, Vector2D playerPos);
+    // Populated from a spawn set built ONCE by EngineCore and handed to both
+    // layouts. See SpawnSample in Spawn.h for why this is an argument rather
+    // than something each container rolls for itself.
+    void init(const std::vector<SpawnSample>& spawn);
+    // simTime is the simulation clock, used only to phase the home orbit. It is
+    // passed in rather than accumulated here so both containers share one clock
+    // and cannot drift a fraction of a revolution apart.
+    void update(float dt, float simTime, Vector2D playerPos);
     int  aliveCount() const;
+
+    // Revive slot i at (x, y) with home point (homeX, homeY) and completely
+    // fresh state.
+    //
+    // Position and home are separate arguments because the respawner has to be
+    // allowed to nudge WHERE a body appears (out of the kill zone, off a shared
+    // pixel) without moving the neighbourhood that body belongs to. Folding them
+    // into one pair would let those nudges accumulate into the home points over
+    // a long run, and the selected distribution would slowly erode into a shell
+    // around wherever the player had been standing.
+    //
+    // The randomised fields are passed in rather than drawn here so that
+    // EngineCore can feed the SAME values to both layouts from one RNG stream.
+    // If each container rolled its own, the AoS and SoA worlds would diverge
+    // the first time anything died and the layout benchmark would be comparing
+    // two different simulations.
+    //
+    // Every field is reset, not just position: a corpse still carries the burn
+    // timer, stun state and knockback impulse that killed it, and reusing the
+    // slot without clearing them would spawn an enemy that dies on arrival.
+    void respawn(int i, float x, float y, float homeX, float homeY,
+                 float stateTimerSeed, float animTimerSeed);
 };

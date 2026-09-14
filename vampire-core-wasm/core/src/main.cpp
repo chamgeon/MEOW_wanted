@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <set>
 #include <vector>
@@ -88,6 +89,74 @@ double timeTicks(EngineCore& engine, int iterations) {
 
 const char* name(CollisionMode m) { return m == CollisionMode::BruteForce ? "BruteForce" : "QuadTree"; }
 const char* name(MemoryMode m)    { return m == MemoryMode::AoS          ? "AoS"        : "SoA"; }
+const char* name(SpawnDistribution d) {
+    return d == SpawnDistribution::Uniform ? "Uniform" : "Clustered";
+}
+
+// ---------------------------------------------------------------------------
+// Spatial concentration: the number that decides whether the distribution
+// toggle is real.
+//
+// The statistic is "how many entities share a cell with the average entity",
+// where a cell is the QuadTree's smallest possible leaf (WORLD / 2^MAX_DEPTH).
+// That is deliberately not the same thing as "entities per cell": a field can
+// have a low mean occupancy and still be pathological for a tree if all the
+// occupancy sits in a few cells. Weighting by occupancy answers the question the
+// QuadTree actually cares about -- what does a typical QUERY have to wade
+// through -- rather than the question a uniformity test would ask.
+//
+//     conc = sum(c_i^2) / sum(c_i)
+//
+// For a Poisson (uniform) field with mean lambda per cell this tends to
+// 1 + lambda; concentrating the same N into a fraction f of the area multiplies
+// it by roughly 1/f. So the ratio between the two distributions is a direct,
+// dimensionless measure of how much harder the clustered field is to partition,
+// and it is computed from the ACTUAL simulated positions rather than from the
+// spawn parameters -- which matters, because repulsion pushes entities apart and
+// could in principle have flattened the clusters back out before the benchmark
+// ever timed them.
+// ---------------------------------------------------------------------------
+double spatialConcentration(const EngineCore& engine) {
+    constexpr int kGrid = 1 << Config::QT_MAX_DEPTH;   // 64 -> 31.25 u cells
+    static std::vector<int> cells;
+    cells.assign(kGrid * kGrid, 0);
+
+    const float* px = engine.getPosX();
+    const float* py = engine.getPosY();
+    const int    n  = engine.getEntityCount();
+    if (n <= 0 || !px || !py) return 0.0;
+
+    const float sx = (float)kGrid / Config::WORLD_WIDTH;
+    const float sy = (float)kGrid / Config::WORLD_HEIGHT;
+
+    for (int i = 0; i < n; ++i) {
+        int cx = (int)(px[i] * sx);
+        int cy = (int)(py[i] * sy);
+        cx = (std::min)((std::max)(cx, 0), kGrid - 1);
+        cy = (std::min)((std::max)(cy, 0), kGrid - 1);
+        ++cells[(size_t)cy * kGrid + cx];
+    }
+
+    double num = 0.0, den = 0.0;
+    for (int c : cells) { num += (double)c * (double)c; den += (double)c; }
+    return den > 0.0 ? num / den : 0.0;
+}
+
+// Build an engine in a known scenario and let it reach its steady state.
+//
+// The settle ticks are not politeness. Spawn placement is the initial condition,
+// not the thing under test: repulsion, aggro and the respawner all act on the
+// field, and a distribution that dissolved within a second would be a decoration
+// rather than a scenario. Measuring after settling is what makes the gate below
+// an honest test of the mechanism instead of a restatement of the spawn code.
+void settleEngine(EngineCore& engine, int n, SpawnDistribution d,
+                  MemoryMode mm, CollisionMode cm, int settleTicks) {
+    engine.init(n);
+    engine.setSpawnDistribution(d);
+    engine.setMemoryMode(mm);
+    engine.setCollisionMode(cm);
+    for (int i = 0; i < settleTicks; ++i) engine.tick(0.05f);
+}
 
 // Reported in bytes; 0 means "could not determine on this platform".
 struct CacheSizes { size_t l1d = 0, l2 = 0, l3 = 0; };
@@ -482,18 +551,33 @@ int runRendererPointerCheck() {
 // operations in the same order, so the tolerance is for compiler reassociation
 // only, not for behavioural drift.
 int runEquivalenceCheck() {
+    // Long enough to cover several aura pulses. AURA_INTERVAL is 2.0 s, so
+    // 120 ticks at dt = 0.05 is 6 simulated seconds and three pulses -- which
+    // means the comparison below runs across multiple full kill-and-respawn
+    // cycles, not just across movement. dt = 0.05 is also the clamp the browser
+    // loop applies to a dropped frame, so this is a dt the engine really sees.
     const int   kEnemies = 2000;
-    const int   kTicks   = 60;
+    const int   kTicks   = 120;
+    const float kDt      = 0.05f;
     const float kTol     = 1e-3f;
 
     int failures = 0;
 
+    // Swept over distribution as well as collision mode. The clustered scenario
+    // is the one that can break this: it drives a very different kill pattern
+    // (a dense blob sitting inside the aura instead of a thin stream walking
+    // into it), so if the AoS and SoA paths were going to disagree about a
+    // knife-edge death, that is where it would surface. A check that only ever
+    // ran the easy scenario would certify a world the demo never shows.
+  for (SpawnDistribution sd : {SpawnDistribution::Uniform, SpawnDistribution::Clustered}) {
     for (CollisionMode cm : {CollisionMode::BruteForce, CollisionMode::QuadTree}) {
         EngineCore a, b;
-        a.init(kEnemies);  a.setMemoryMode(MemoryMode::AoS);  a.setCollisionMode(cm);
-        b.init(kEnemies);  b.setMemoryMode(MemoryMode::SoA);  b.setCollisionMode(cm);
+        a.init(kEnemies);  a.setSpawnDistribution(sd);
+        a.setMemoryMode(MemoryMode::AoS);  a.setCollisionMode(cm);
+        b.init(kEnemies);  b.setSpawnDistribution(sd);
+        b.setMemoryMode(MemoryMode::SoA);  b.setCollisionMode(cm);
 
-        for (int i = 0; i < kTicks; ++i) { a.tick(0.016f); b.tick(0.016f); }
+        for (int i = 0; i < kTicks; ++i) { a.tick(kDt); b.tick(kDt); }
 
         const float* ax = a.getAoSPosX();  const float* ay = a.getAoSPosY();
         const float* bx = b.getSoAPosX();  const float* by = b.getSoAPosY();
@@ -504,13 +588,254 @@ int runEquivalenceCheck() {
             worst = std::max(worst, std::fabs(ay[i] - by[i]));
         }
 
-        const bool ok = (worst <= kTol);
-        std::printf("[check] AoS/SoA equivalence (%-10s): worst position delta"
-                    " %.6f ... %s\n", name(cm), worst, ok ? "PASS" : "FAIL");
+        // The kill set, not just the coordinates.
+        //
+        // Once the aura can kill, position agreement is no longer sufficient.
+        // If the two layouts disagree about which entities are corpses, they
+        // feed different live counts into the O(N^2) kernel from that tick on,
+        // and the ms/tick columns stop being a layout comparison -- the faster
+        // column is simply the one simulating fewer enemies.
+        //
+        // Exact equality is demanded on purpose. The two repulsion kernels are
+        // separate code and a compiler may reassociate them differently, so a
+        // position sitting exactly on the aura boundary could in principle fall
+        // on opposite sides in the two builds. The mismatch count is printed
+        // rather than a bare PASS/FAIL so that such a knife-edge single flip is
+        // visibly different from systematic divergence -- but either way it is
+        // a failure, because after one flip the two worlds are not the same
+        // world and nothing below can be compared.
+        const uint8_t* aa = a.getAoSAlive();
+        const uint8_t* ba = b.getSoAAlive();
+        int aliveMismatch = 0;
+        for (int i = 0; i < kEnemies; ++i)
+            if ((aa[i] != 0) != (ba[i] != 0)) ++aliveMismatch;
+
+        const int killsA = a.getKills();
+        const int killsB = b.getKills();
+
+        const bool posOk   = (worst <= kTol);
+        const bool killOk  = (killsA == killsB);
+        const bool aliveOk = (aliveMismatch == 0);
+        const bool ok      = posOk && killOk && aliveOk;
+
+        std::printf("[check] AoS/SoA equivalence (%-10s %-9s): worst pos delta %.6f,"
+                    " kills %d vs %d, alive mismatches %d ... %s\n",
+                    name(cm), name(sd), worst, killsA, killsB, aliveMismatch,
+                    ok ? "PASS" : "FAIL");
+
+        // A run in which nothing died would pass every assertion above while
+        // proving nothing about the aura, so the absence of kills is itself a
+        // failure of the test rather than a clean result.
+        if (killsA == 0) {
+            std::printf("[check]   -> no kills in %d ticks; the aura did not fire or"
+                        " reached nothing. This check proved nothing. ... FAIL\n", kTicks);
+            ++failures;
+        }
+
         if (!ok) ++failures;
     }
+  }
 
     return failures;
+}
+
+// The aura kills; the respawner refills. If the refill cannot keep up, the live
+// population drifts down over a run -- and since every ms/tick figure in this
+// demo is a function of N, a drifting N makes the engine look like it is
+// getting faster when all that happened is that there is less to simulate.
+//
+// This is the single easiest way for the benchmark to start lying without
+// anything looking broken on screen, so it gets its own check.
+int runPopulationStabilityCheck() {
+    const int   kEnemies = 4000;
+    const int   kTicks   = 240;   // 12 simulated seconds -> 6 aura pulses
+    const float kDt      = 0.05f;
+
+    // The metric is DRIFT, not the instantaneous minimum.
+    //
+    // A pulse legitimately empties the ring around the player in one tick, and
+    // respawnDead() refills at RESPAWN_PER_TICK per tick, so the live count
+    // genuinely dips right after each pulse. That transient is by design and
+    // asserting against it would only measure the refill budget. What must not
+    // happen is for those dips to fail to recover -- a population that ends the
+    // run lower than it started is a slow leak, and it is exactly the failure
+    // that would make every ms/tick number in the demo trend downward for a
+    // reason unrelated to the algorithm under test.
+    //
+    // So: compare the mean live count over the first quarter of the run against
+    // the last quarter. Both windows span more than one full 2 s aura cycle, so
+    // each averages over the same mix of dip and recovery and the comparison is
+    // like-for-like.
+    const float kDriftTol = 0.02f;   // 2% of the target population
+
+    int failures = 0;
+
+    // Both distributions, because the respawn rule changed WITH the
+    // distribution axis and the clustered case is the harder one: a blob sitting
+    // on the player loses a large fraction of itself to every pulse, so it leans
+    // on RESPAWN_PER_TICK far harder than a thin uniform stream does. If the
+    // refill budget were too small, this is the scenario that would expose it --
+    // and a population quietly sagging under Clustered would make the QuadTree
+    // look better there for a reason that has nothing to do with partitioning.
+  for (SpawnDistribution sd : {SpawnDistribution::Uniform, SpawnDistribution::Clustered}) {
+    for (MemoryMode mm : {MemoryMode::AoS, MemoryMode::SoA}) {
+        EngineCore engine;
+        engine.init(kEnemies);
+        engine.setSpawnDistribution(sd);
+        engine.setMemoryMode(mm);
+        engine.setCollisionMode(CollisionMode::QuadTree);
+
+        const int quarter = kTicks / 4;
+        double    headSum = 0.0, tailSum = 0.0;
+        int       lowest  = kEnemies;
+
+        for (int i = 0; i < kTicks; ++i) {
+            engine.tick(kDt);
+            const int alive = engine.getAliveCount();
+            lowest = (std::min)(lowest, alive);
+            if (i < quarter)             headSum += alive;
+            if (i >= kTicks - quarter)   tailSum += alive;
+        }
+
+        const double head  = headSum / quarter;
+        const double tail  = tailSum / quarter;
+        const double drift = (head - tail) / (double)kEnemies;
+        const int    kills = engine.getKills();
+
+        // Both directions matter. A population that grew would mean the
+        // respawner is handing out slots that were never vacated.
+        const bool ok = (std::fabs(drift) <= kDriftTol) && (kills > 0);
+
+        std::printf("[check] population stability (%s %-9s): %d kills, mean live"
+                    " %.0f -> %.0f (drift %+.2f%%), low-water %d/%d ... %s\n",
+                    name(mm), name(sd), kills, head, tail, drift * 100.0,
+                    lowest, kEnemies, ok ? "PASS" : "FAIL");
+        if (!ok) ++failures;
+    }
+  }
+
+    return failures;
+}
+
+// ---------------------------------------------------------------------------
+// The honesty gate for the scenario axis.
+//
+// The claim this demo makes about distribution is: "the same N, the same
+// kernels, a different spatial arrangement, and the winner changes." If the two
+// distributions do not in fact produce measurably different fields -- or if the
+// clustered one dissolves after a few seconds of repulsion -- then the sweep
+// below is comparing a scenario against itself, every timing difference in it is
+// noise, and any conclusion an optimizer agent draws from it is invented.
+//
+// So the axis has to prove itself before any of its numbers are allowed to
+// count. Two things are asserted:
+//
+//   1. Clustered is materially more concentrated than Uniform. "Materially" is
+//      pinned to a number (2x) rather than left to the eye.
+//   2. It is STILL more concentrated after the field has been simulated, not
+//      merely at the instant it was spawned. This is the one that would actually
+//      have failed before AGGRO_RANGE existed: with every enemy chasing the
+//      player from anywhere in the world, both distributions collapsed into the
+//      same ball within seconds and t=0 was the only moment they differed.
+// ---------------------------------------------------------------------------
+int runDistributionGate() {
+    const int    kEnemies  = 5000;
+    const int    kSettle   = 120;    // 6 simulated seconds, 3 aura pulses
+    const double kMinRatio = 2.0;
+
+    std::printf("\n=== Scenario gate: is the distribution toggle real? ===\n\n");
+    std::printf("Concentration = entities sharing the average entity's QuadTree leaf\n");
+    std::printf("(%d x %d cells of %.1f u). Higher means harder to partition.\n\n",
+                1 << Config::QT_MAX_DEPTH, 1 << Config::QT_MAX_DEPTH,
+                Config::WORLD_WIDTH / (float)(1 << Config::QT_MAX_DEPTH));
+
+    char settledHdr[32];
+    std::snprintf(settledHdr, sizeof(settledHdr), "after %d ticks", kSettle);
+    std::printf("%-11s  %12s  %14s\n", "spawn", "at spawn", settledHdr);
+    std::printf("%-11s  %12s  %14s\n", "-----------", "------------", "--------------");
+
+    double settled[2] = {0.0, 0.0};
+    int    k = 0;
+    for (SpawnDistribution d : {SpawnDistribution::Uniform, SpawnDistribution::Clustered}) {
+        EngineCore fresh;
+        settleEngine(fresh, kEnemies, d, MemoryMode::SoA, CollisionMode::QuadTree, 0);
+        const double c0 = spatialConcentration(fresh);
+
+        EngineCore run;
+        settleEngine(run, kEnemies, d, MemoryMode::SoA, CollisionMode::QuadTree, kSettle);
+        const double cN = spatialConcentration(run);
+
+        settled[k++] = cN;
+        std::printf("%-11s  %12.2f  %14.2f\n", name(d), c0, cN);
+    }
+
+    const double ratio = (settled[0] > 0.0) ? settled[1] / settled[0] : 0.0;
+    const bool   ok    = ratio >= kMinRatio;
+
+    std::printf("\n[check] clustered/uniform concentration after %d ticks:"
+                " %.2fx (need >= %.1fx) ... %s\n",
+                kSettle, ratio, kMinRatio, ok ? "PASS" : "FAIL");
+
+    if (!ok) {
+        std::printf("[check]   -> the two scenarios are not distinguishable, so the\n");
+        std::printf("[check]      sweep below is timing one field twice. Check that\n");
+        std::printf("[check]      AGGRO_RANGE still holds enemies at their home points\n");
+        std::printf("[check]      and that respawnDead() is still reviving them there.\n");
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// The distribution sweep: the measurement the whole axis exists to produce.
+//
+// Memory layout is pinned to SoA so exactly one variable moves per row pair.
+// BruteForce is the control: its cost is N^2 wherever the entities are, so any
+// row-to-row change in the BF column is machine noise and can be read as the
+// sweep's own error bar. Everything the QuadTree column does beyond that is the
+// distribution talking.
+//
+// The winner is printed per row rather than asserted, because which way it goes
+// is the finding. A sweep that hard-coded the expected answer would be an
+// assertion with a table attached.
+// ---------------------------------------------------------------------------
+void runDistributionSweep() {
+    std::printf("\n=== Distribution sweep (SoA fixed; ms per tick, lower is better) ===\n\n");
+    std::printf("BruteForce is the control: N^2 regardless of layout in space, so its\n");
+    std::printf("variation across distributions is this sweep's noise floor. QuadTree\n");
+    std::printf("is the variable: a balanced tree is cheap, a lopsided one is not.\n\n");
+
+    std::printf("%8s  %-11s  %10s  %10s  %10s  %s\n",
+                "entities", "spawn", "BF ms", "QT ms", "QT/BF", "winner");
+    std::printf("%8s  %-11s  %10s  %10s  %10s  %s\n",
+                "--------", "-----------", "----------", "----------", "----------", "------");
+
+    for (int n : {2000, 5000, 10000}) {
+        for (SpawnDistribution d : {SpawnDistribution::Uniform, SpawnDistribution::Clustered}) {
+            double ms[2] = {0.0, 0.0};
+            int    k     = 0;
+            for (CollisionMode cm : {CollisionMode::BruteForce, CollisionMode::QuadTree}) {
+                EngineCore engine;
+                // Settle first, then time. Timing from tick 0 would average the
+                // spawn-state field together with the steady-state one, and the
+                // spawn state is the one moment the two distributions are
+                // guaranteed to differ -- it would flatter the axis.
+                settleEngine(engine, n, d, MemoryMode::SoA, cm, 20);
+                const int iters = (cm == CollisionMode::BruteForce && n >= 5000) ? 3 : 15;
+                ms[k++] = timeTicks(engine, iters);
+            }
+            const double bf = ms[0], qt = ms[1];
+            std::printf("%8d  %-11s  %10.3f  %10.3f  %9.2fx  %s\n",
+                        n, name(d), bf, qt, bf > 0.0 ? qt / bf : 0.0,
+                        qt < bf ? "QuadTree" : "BruteForce");
+        }
+        std::printf("\n");
+    }
+
+    std::printf("  Read the QT/BF column, not the absolute times. It is the QuadTree's\n");
+    std::printf("  advantage expressed against a control that cannot be affected by\n");
+    std::printf("  the thing being varied, so it isolates the distribution effect from\n");
+    std::printf("  everything else this machine is doing.\n");
 }
 
 }  // namespace
@@ -522,15 +847,33 @@ int main() {
     int failures = runCorrectnessChecks();
     failures += runRendererPointerCheck();
     failures += runEquivalenceCheck();
+    failures += runPopulationStabilityCheck();
+
+    // The gate runs before the sweep it guards, so a reader who stops at the
+    // first FAIL has already been told not to trust the table underneath it.
+    const int gateFailures = runDistributionGate();
+    failures += gateFailures;
+
     runBenchmark();
+    if (gateFailures == 0) {
+        runDistributionSweep();
+    } else {
+        std::printf("\n=== Distribution sweep SKIPPED ===\n\n");
+        std::printf("  The scenario gate failed, so the two distributions are not\n");
+        std::printf("  measurably different fields. Running the sweep anyway would\n");
+        std::printf("  produce a table of noise that looks exactly like a result.\n");
+    }
     runCacheCliff(queryCacheSizes());
 
     if (failures > 0) {
         std::printf("*** %d check(s) FAILED. Either the QuadTree is not visiting the\n"
                     "*** same set of pairs as BruteForce, or the AoS and SoA paths are\n"
-                    "*** no longer simulating the same world. In either case the\n"
-                    "*** ms/tick columns above are timing two different workloads and\n"
-                    "*** cannot be used as evidence that anything is faster.\n\n",
+                    "*** no longer simulating the same world, or the respawner is\n"
+                    "*** letting the aura grind the population down, or the spawn\n"
+                    "*** distributions have stopped being distinguishable. In every\n"
+                    "*** case the ms/tick columns above are timing two different\n"
+                    "*** workloads and cannot be used as evidence that anything is\n"
+                    "*** faster.\n\n",
                     failures);
     }
     return failures == 0 ? 0 : 1;
