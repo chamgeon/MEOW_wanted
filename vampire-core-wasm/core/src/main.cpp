@@ -87,7 +87,15 @@ double timeTicks(EngineCore& engine, int iterations) {
     return std::chrono::duration<double, std::milli>(t1 - t0).count() / iterations;
 }
 
-const char* name(CollisionMode m) { return m == CollisionMode::BruteForce ? "BruteForce" : "QuadTree"; }
+const char* name(CollisionMode m) {
+    switch (m) {
+        case CollisionMode::BruteForce: return "BruteForce";
+        case CollisionMode::QuadTree: return "QuadTree";
+        case CollisionMode::UniformGrid: return "UniformGrid";
+        case CollisionMode::SpatialHash: return "SpatialHash";
+    }
+    return "Unknown";
+}
 const char* name(MemoryMode m)    { return m == MemoryMode::AoS          ? "AoS"        : "SoA"; }
 const char* name(SpawnDistribution d) {
     return d == SpawnDistribution::Uniform ? "Uniform" : "Clustered";

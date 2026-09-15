@@ -29,7 +29,7 @@ You will receive:
 - Markers recording exactly when a mode, the distribution, or the entity count
   was toggled
 - The active C++ code path (collision + memory mode)
-- Modes: Collision [BruteForce | QuadTree], Memory [AoS | SoA]
+- Modes: Collision [BruteForce | QuadTree | UniformGrid | SpatialHash], Memory [AoS | SoA]
 - Spawn distribution [Uniform | Clustered]. This is the scenario, not a tunable:
   Uniform scatters enemies evenly over the 2000x2000 world, Clustered packs them
   into 5 gaussian blobs (sigma 110) that they orbit until the player comes
@@ -90,7 +90,7 @@ Output format (strict):
 <quantified reasoning>
 
 ## Recommended Configuration
-collision: <BruteForce|QuadTree>
+collision: <BruteForce|QuadTree|UniformGrid|SpatialHash>
 memory: <AoS|SoA>
 confidence: <high|medium|low>
 reason: <one sentence, under 120 characters>
@@ -119,7 +119,8 @@ def _mode_tag(collision: str, memory: str, distribution: str = "Uniform") -> str
     existed still render. They were all Uniform runs -- that was the only
     behaviour the engine had -- so the default is the true value, not a guess.
     """
-    c = "QT" if collision == "QuadTree" else "BF"
+    c = {"BruteForce": "BF", "QuadTree": "QT", "UniformGrid": "UG",
+         "SpatialHash": "SH"}.get(collision, "??")
     d = "C" if distribution == "Clustered" else "U"
     return f"{c}/{memory}/{d}"
 

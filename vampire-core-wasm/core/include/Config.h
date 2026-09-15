@@ -5,7 +5,7 @@ namespace Config {
     constexpr float WORLD_WIDTH       = 2000.0f;
     constexpr float WORLD_HEIGHT      = 2000.0f;
 
-    constexpr int   MAX_ENEMIES       = 10000;
+    constexpr int   MAX_ENEMIES       = 100000;
     constexpr int   DEFAULT_ENEMIES   = 5000;
     constexpr float TARGET_FPS        = 60.0f;
 

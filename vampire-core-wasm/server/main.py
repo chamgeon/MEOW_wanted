@@ -1,14 +1,22 @@
 import os
 import re
+import asyncio
+import json
+import uuid
 from typing import Any
 
 import anthropic
+import openai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from prompts import SYSTEM_PROMPT, build_user_prompt
+from agent_candidates import comparison_algorithms
+from agent_pipeline import (GENERATED, MAX_BRUTE_FORCE_ENEMIES, diagnostic_source,
+                            process_log, run_experiment, source_hash, source_snapshot)
 
 load_dotenv()
 
@@ -23,6 +31,8 @@ MODEL = os.environ.get("MODEL", "claude-sonnet-5")
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1600"))
 
 app = FastAPI(title="Vampire-Core AI Profiler", version="0.2.0")
+optimization_jobs: dict[str, dict] = {}
+optimization_lock = asyncio.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,7 +112,8 @@ class OptimizeResponse(BaseModel):
 
 _FIELD_RE = re.compile(r"^\s*(collision|memory|confidence|reason)\s*:\s*(.+?)\s*$", re.IGNORECASE)
 
-_VALID_COLLISION = {"bruteforce": "BruteForce", "quadtree": "QuadTree"}
+_VALID_COLLISION = {"bruteforce": "BruteForce", "quadtree": "QuadTree",
+                    "uniformgrid": "UniformGrid", "spatialhash": "SpatialHash"}
 _VALID_MEMORY = {"aos": "AoS", "soa": "SoA"}
 _VALID_CONFIDENCE = {"high", "medium", "low"}
 
@@ -187,3 +198,153 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "model": MODEL, "key_configured": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+
+
+# New verified optimization workflow. The older /api/optimize endpoint remains
+# available for clients still using its text-only analysis contract.
+class OptimizationJobRequest(BaseModel):
+    collisionMode: str
+    memoryMode: str
+    distribution: str
+    speedMultiplier: float = 1.0
+    sourceHash: str
+    telemetry: dict[str, Any]
+
+
+async def _plan(req: OptimizationJobRequest, observations: dict,
+                source: dict) -> tuple[list[str], str, str | None]:
+    available = comparison_algorithms(req.collisionMode)
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return available, "reviewed candidate fallback (OPENAI_API_KEY missing)", None
+    try:
+        client = openai.AsyncOpenAI(api_key=key, timeout=35)
+        response = await client.responses.create(
+            model=os.environ.get("AGENT_MODEL", "gpt-4.1-mini"),
+            max_output_tokens=650,
+            instructions=("You are a C++ game performance advisor. Read the real active source and "
+                          "observations. Return JSON only: {\"candidates\":[IDs in priority order],"
+                          "\"reason\":\"concise Korean analysis with uncertainty\"}. "
+                          "Use only offered IDs; symptoms are hypotheses, not proof. "
+                          "If frame time rises but sim time does not, explain that the C++ "
+                          "collision path may not be the bottleneck."),
+            input=json.dumps({"available": available, "observations": observations,
+                              "activeSource": diagnostic_source(source, req.collisionMode)},
+                             ensure_ascii=False),
+        )
+        payload = response.output_text.strip()
+        if payload.startswith("```"):
+            payload = payload.split("\n", 1)[1].rsplit("```", 1)[0]
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise ValueError("Advisor response is not an object")
+        selected = parsed.get("candidates", [])
+        order = [item for item in selected if isinstance(item, str) and item in available] if isinstance(selected, list) else []
+        order = list(dict.fromkeys(order + available))[:3]
+        return order, "OpenAI advisor", str(parsed.get("reason", ""))[:1500]
+    except (openai.APIError, ValueError, KeyError, IndexError, TypeError):
+        return available, "reviewed candidate fallback (advisor unavailable)", None
+
+
+def _save_optimization(job_id: str) -> None:
+    directory = GENERATED / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / "report.tmp"
+    temporary.write_text(json.dumps(optimization_jobs[job_id], ensure_ascii=False), encoding="utf-8")
+    temporary.replace(directory / "report.json")
+
+
+async def _process_optimization(job_id: str, req: OptimizationJobRequest) -> None:
+    async with optimization_lock:
+        job = optimization_jobs[job_id]
+        try:
+            job["status"] = "advising"
+            _save_optimization(job_id)
+            snapshot = source_snapshot()
+            if source_hash(snapshot) != req.sourceHash:
+                raise ValueError("Source changed while the experiment was queued")
+            observations = process_log(req.telemetry["records"], req.collisionMode,
+                                       req.memoryMode, req.distribution, req.speedMultiplier)
+            plan, advisor_mode, advice = await _plan(req, observations, snapshot)
+            job.update(advisorMode=advisor_mode, aiAdvice=advice, plannedCandidates=plan)
+            _save_optimization(job_id)
+
+            def on_progress(status: str, candidates: list[dict]) -> None:
+                # The worker thread owns candidate dictionaries during execution.
+                # Snapshot to avoid serializing an object mid-mutation.
+                job.update(status=status, candidates=json.loads(json.dumps(candidates)))
+                _save_optimization(job_id)
+
+            report = await asyncio.to_thread(run_experiment, job_id, req.model_dump(), plan, on_progress)
+            job.update(report)
+        except Exception as exc:
+            job.update(status="failed", reason=str(exc)[:600])
+        _save_optimization(job_id)
+
+
+@app.get("/api/agent-meta")
+async def agent_meta() -> dict:
+    return {"sourceHash": source_hash(source_snapshot()),
+            "sourceScope": "EngineCore.cpp, QuadTree.cpp, EngineCore.h, Config.h, bindings.cpp and agent_bench.cpp"}
+
+
+@app.post("/api/optimization-jobs", status_code=202)
+async def create_optimization_job(req: OptimizationJobRequest) -> dict:
+    if req.collisionMode not in {"BruteForce", "QuadTree", "UniformGrid", "SpatialHash"} or req.memoryMode not in {"AoS", "SoA"}:
+        raise HTTPException(status_code=422, detail="Unsupported engine mode")
+    if req.distribution not in {"Uniform", "Clustered"}:
+        raise HTTPException(status_code=422, detail="Unsupported spawn distribution")
+    if req.speedMultiplier not in {0.25, 0.5, 1.0, 2.0, 4.0}:
+        raise HTTPException(status_code=422, detail="Unsupported simulation speed")
+    records = req.telemetry.get("records")
+    if not isinstance(records, list) or not 3 <= len(records) <= 60 or not all(isinstance(r, dict) for r in records):
+        raise HTTPException(status_code=422, detail="Supply 3 to 60 recent telemetry records")
+    if req.collisionMode == "BruteForce" and any(
+        isinstance(record.get("slots"), (int, float)) and
+        record["slots"] > MAX_BRUTE_FORCE_ENEMIES for record in records
+    ):
+        raise HTTPException(status_code=422, detail="BruteForce is limited to 10,000 enemies")
+    if req.sourceHash != source_hash(source_snapshot()):
+        raise HTTPException(status_code=409, detail="Server source changed; retry with current source version")
+    try:
+        process_log(records, req.collisionMode, req.memoryMode, req.distribution, req.speedMultiplier)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    active = sum(job.get("status") not in {"ready", "no_improvement", "failed", "interrupted"}
+                 for job in optimization_jobs.values())
+    if active >= 2:
+        raise HTTPException(status_code=429, detail="Experiment queue is full; try again later")
+    job_id = uuid.uuid4().hex
+    optimization_jobs[job_id] = {"jobId": job_id, "status": "queued", "candidates": []}
+    _save_optimization(job_id)
+    asyncio.create_task(_process_optimization(job_id, req))
+    return {"jobId": job_id, "status": "queued"}
+
+
+@app.get("/api/optimization-jobs/{job_id}")
+async def get_optimization_job(job_id: str) -> dict:
+    if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = optimization_jobs.get(job_id)
+    if job is None:
+        report = GENERATED / job_id / "report.json"
+        if report.is_file():
+            job = json.loads(report.read_text(encoding="utf-8"))
+            if job.get("status") not in {"ready", "no_improvement", "failed"}:
+                job = {**job, "status": "interrupted", "reason": "Server restarted before the experiment finished"}
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/api/optimization-jobs/{job_id}/artifacts/{filename}")
+async def get_optimization_artifact(job_id: str, filename: str) -> FileResponse:
+    if filename not in {"core_engine.js", "core_engine.wasm"}:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    job = await get_optimization_job(job_id)
+    if job.get("status") != "ready":
+        raise HTTPException(status_code=404, detail="Artifact not ready")
+    path = GENERATED / job_id / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path)

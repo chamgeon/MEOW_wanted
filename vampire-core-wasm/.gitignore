@@ -21,6 +21,17 @@ venv/
 # Secrets
 .env
 server/.env
+server/generated/
+
+# Local AI-agent architecture and comparison artifacts (not part of code branch)
+/AGENT_IMPLEMENTATION.md
+/AI_AGENT_*.md
+/AI_AGENT_*.svg
+/AI_AGENT_*.png
+/AI_OPTIMIZATION_AGENT_DESIGN.md
+/AUTONOMOUS_OPTIMIZATION_NEXT_STEPS.md
+/MAIN_VS_FEAT_MW_AI_AGENT_COMPARISON.md
+/PROPOSED_AI_AGENT_ARCHITECTURE.md
 
 # Editors / OS
 .vscode/
