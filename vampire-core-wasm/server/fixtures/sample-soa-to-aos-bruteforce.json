@@ -1,0 +1,961 @@
+{
+    "fps": 30.0042863266121,
+    "frameTimeMs": 15.613335609436035,
+    "entityCount": 2500,
+    "collisionMode": "BruteForce",
+    "memoryMode": "AoS",
+    "spawnDistribution": "Uniform",
+    "codeSnippet": "// AoS Brute-Force  O(N^2) repulsion\nfor (int i = 0; i < n; ++i) {\n  Vector2D force{};\n  for (int j = 0; j < n; ++j) {  // cache-unfriendly struct stride\n    Vector2D d  = e[i].position - e[j].position;\n    float    d2 = d.lengthSq();\n    if (d2 < sepDistSq && d2 > 1e-6f) {\n      float dist = sqrtf(d2);\n      float f = (sep-dist)/sep * REPULSION_FORCE;\n      force += d / dist * f;\n    }\n  }\n  e[i].position += force * dt;\n}",
+    "auraSnippet": "// Aura pulse, fired every Config::AURA_INTERVAL (2.0 s).\n// Deliberately a linear scan in BOTH collision modes: reusing the QuadTree\n// would read pre-repulsion positions and make the two modes disagree on the\n// kill set, which would break the AoS/SoA equivalence check.\nvoid EngineCore::fireAura() {\n  const float rSq = Config::AURA_RADIUS * Config::AURA_RADIUS;\n  for (int i = 0; i < n; ++i) {\n    if (!alive[i]) continue;\n    float dx = posX[i] - playerPos_.x;\n    float dy = posY[i] - playerPos_.y;\n    float d2 = dx*dx + dy*dy;\n    if (d2 > rSq) continue;\n    health[i] -= Config::AURA_DAMAGE;\n    // knockback along the normalised (dx, dy)\n    if (health[i] <= 0.f) alive[i] = 0;\n  }\n}",
+    "telemetry": {
+        "meta": {
+            "runId": "ed9bbc23-dba7-430b-b1ea-efb8ca7dbbed",
+            "startedAt": "2026-09-15T09:49:09.445Z",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+            "hardwareConcurrency": 8,
+            "deviceMemoryGB": 8,
+            "budgetMs": 16.667,
+            "intervalMs": 1000
+        },
+        "markers": [
+            {
+                "t": 1305.211,
+                "kind": "memoryMode",
+                "from": "SoA",
+                "to": "AoS"
+            }
+        ],
+        "records": [
+            {
+                "seq": 910,
+                "t": 1285.31,
+                "wallClock": "2026-09-15T10:10:34.791Z",
+                "fps": 29.997,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.277,
+                    "p50": 17.3,
+                    "p95": 17.6,
+                    "p99": 17.8,
+                    "max": 17.8
+                },
+                "frameMs": {
+                    "mean": 17.553,
+                    "p50": 17.6,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 94,
+                "killsTotal": 1421,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 29,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 911,
+                "t": 1286.341,
+                "wallClock": "2026-09-15T10:10:35.822Z",
+                "fps": 30.077,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.177,
+                    "p50": 17.3,
+                    "p95": 17.6,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.452,
+                    "p50": 17.6,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 1421,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 28,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 912,
+                "t": 1287.344,
+                "wallClock": "2026-09-15T10:10:36.825Z",
+                "fps": 29.919,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.317,
+                    "p50": 17.4,
+                    "p95": 17.7,
+                    "p99": 17.8,
+                    "max": 17.8
+                },
+                "frameMs": {
+                    "mean": 17.62,
+                    "p50": 17.7,
+                    "p95": 18,
+                    "p99": 18.1,
+                    "max": 18.1
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 156,
+                "killsTotal": 1577,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 913,
+                "t": 1288.344,
+                "wallClock": "2026-09-15T10:10:37.825Z",
+                "fps": 29.979,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.433,
+                    "p50": 17.4,
+                    "p95": 18,
+                    "p99": 18.3,
+                    "max": 18.3
+                },
+                "frameMs": {
+                    "mean": 17.723,
+                    "p50": 17.7,
+                    "p95": 18.2,
+                    "p99": 18.5,
+                    "max": 18.5
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 1577,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 914,
+                "t": 1289.376,
+                "wallClock": "2026-09-15T10:10:38.858Z",
+                "fps": 30.036,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.268,
+                    "p50": 17.3,
+                    "p95": 17.5,
+                    "p99": 17.6,
+                    "max": 17.6
+                },
+                "frameMs": {
+                    "mean": 17.548,
+                    "p50": 17.6,
+                    "p95": 17.8,
+                    "p99": 17.9,
+                    "max": 17.9
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 88,
+                "killsTotal": 1665,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 31,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 915,
+                "t": 1290.377,
+                "wallClock": "2026-09-15T10:10:39.859Z",
+                "fps": 29.973,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.217,
+                    "p50": 17.3,
+                    "p95": 17.6,
+                    "p99": 17.6,
+                    "max": 17.6
+                },
+                "frameMs": {
+                    "mean": 17.477,
+                    "p50": 17.6,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 1,
+                "killsTotal": 1666,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 28,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 916,
+                "t": 1291.377,
+                "wallClock": "2026-09-15T10:10:40.859Z",
+                "fps": 30,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.307,
+                    "p50": 17.4,
+                    "p95": 17.7,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.557,
+                    "p50": 17.6,
+                    "p95": 18,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 150,
+                "killsTotal": 1816,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 917,
+                "t": 1292.377,
+                "wallClock": "2026-09-15T10:10:41.859Z",
+                "fps": 29.997,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.25,
+                    "p50": 17.3,
+                    "p95": 17.5,
+                    "p99": 17.5,
+                    "max": 17.5
+                },
+                "frameMs": {
+                    "mean": 17.54,
+                    "p50": 17.6,
+                    "p95": 17.8,
+                    "p99": 17.9,
+                    "max": 17.9
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 1,
+                "killsTotal": 1817,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 918,
+                "t": 1293.411,
+                "wallClock": "2026-09-15T10:10:42.892Z",
+                "fps": 30.001,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.29,
+                    "p50": 17.4,
+                    "p95": 17.6,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.555,
+                    "p50": 17.7,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 99,
+                "killsTotal": 1916,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 31,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 919,
+                "t": 1294.443,
+                "wallClock": "2026-09-15T10:10:43.925Z",
+                "fps": 30.033,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.252,
+                    "p50": 17.3,
+                    "p95": 17.6,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.545,
+                    "p50": 17.6,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 1916,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 31,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 920,
+                "t": 1295.475,
+                "wallClock": "2026-09-15T10:10:44.957Z",
+                "fps": 30.042,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.239,
+                    "p50": 16.5,
+                    "p95": 26.8,
+                    "p99": 27.2,
+                    "max": 27.2
+                },
+                "frameMs": {
+                    "mean": 17.619,
+                    "p50": 16.9,
+                    "p95": 27.4,
+                    "p99": 28.1,
+                    "max": 28.1
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 151,
+                "killsTotal": 2067,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 17,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 921,
+                "t": 1296.478,
+                "wallClock": "2026-09-15T10:10:45.959Z",
+                "fps": 28.919,
+                "frames": 29,
+                "simMs": {
+                    "mean": 19.348,
+                    "p50": 16.3,
+                    "p95": 39.5,
+                    "p99": 43.2,
+                    "max": 43.2
+                },
+                "frameMs": {
+                    "mean": 19.734,
+                    "p50": 16.8,
+                    "p95": 40.5,
+                    "p99": 43.8,
+                    "max": 43.8
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2067,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 16,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 922,
+                "t": 1297.478,
+                "wallClock": "2026-09-15T10:10:46.959Z",
+                "fps": 30,
+                "frames": 30,
+                "simMs": {
+                    "mean": 16.967,
+                    "p50": 17.2,
+                    "p95": 17.6,
+                    "p99": 17.6,
+                    "max": 17.6
+                },
+                "frameMs": {
+                    "mean": 17.267,
+                    "p50": 17.4,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 100,
+                "killsTotal": 2167,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 27,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 923,
+                "t": 1298.511,
+                "wallClock": "2026-09-15T10:10:47.993Z",
+                "fps": 30.001,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.213,
+                    "p50": 17.3,
+                    "p95": 17.6,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.484,
+                    "p50": 17.6,
+                    "p95": 17.9,
+                    "p99": 17.9,
+                    "max": 17.9
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2167,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 924,
+                "t": 1299.544,
+                "wallClock": "2026-09-15T10:10:49.026Z",
+                "fps": 29.998,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.258,
+                    "p50": 17.3,
+                    "p95": 17.7,
+                    "p99": 18.2,
+                    "max": 18.2
+                },
+                "frameMs": {
+                    "mean": 17.526,
+                    "p50": 17.6,
+                    "p95": 18,
+                    "p99": 18.5,
+                    "max": 18.5
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 153,
+                "killsTotal": 2320,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 31,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 925,
+                "t": 1300.578,
+                "wallClock": "2026-09-15T10:10:50.059Z",
+                "fps": 30.004,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.265,
+                    "p50": 17.3,
+                    "p95": 18.3,
+                    "p99": 18.5,
+                    "max": 18.5
+                },
+                "frameMs": {
+                    "mean": 17.516,
+                    "p50": 17.5,
+                    "p95": 18.6,
+                    "p99": 18.8,
+                    "max": 18.8
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 1,
+                "killsTotal": 2321,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 926,
+                "t": 1301.578,
+                "wallClock": "2026-09-15T10:10:51.060Z",
+                "fps": 30,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.27,
+                    "p50": 17.3,
+                    "p95": 17.9,
+                    "p99": 18.3,
+                    "max": 18.3
+                },
+                "frameMs": {
+                    "mean": 17.533,
+                    "p50": 17.5,
+                    "p95": 18.2,
+                    "p99": 18.4,
+                    "max": 18.4
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 68,
+                "killsTotal": 2389,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 927,
+                "t": 1302.578,
+                "wallClock": "2026-09-15T10:10:52.060Z",
+                "fps": 29.994,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.31,
+                    "p50": 17.4,
+                    "p95": 17.7,
+                    "p99": 18.1,
+                    "max": 18.1
+                },
+                "frameMs": {
+                    "mean": 17.583,
+                    "p50": 17.7,
+                    "p95": 18,
+                    "p99": 18.3,
+                    "max": 18.3
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2389,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 928,
+                "t": 1303.609,
+                "wallClock": "2026-09-15T10:10:53.091Z",
+                "fps": 30.062,
+                "frames": 31,
+                "simMs": {
+                    "mean": 17.229,
+                    "p50": 17.2,
+                    "p95": 17.8,
+                    "p99": 18.3,
+                    "max": 18.3
+                },
+                "frameMs": {
+                    "mean": 17.474,
+                    "p50": 17.4,
+                    "p95": 18.1,
+                    "p99": 18.6,
+                    "max": 18.6
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 83,
+                "killsTotal": 2472,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 929,
+                "t": 1304.611,
+                "wallClock": "2026-09-15T10:10:54.093Z",
+                "fps": 29.928,
+                "frames": 30,
+                "simMs": {
+                    "mean": 17.137,
+                    "p50": 17.1,
+                    "p95": 17.7,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 17.407,
+                    "p50": 17.4,
+                    "p95": 17.9,
+                    "p99": 18,
+                    "max": 18
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2472,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "SoA",
+                "distribution": "Uniform",
+                "longFrames": 30,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 930,
+                "t": 1305.643,
+                "wallClock": "2026-09-15T10:10:55.125Z",
+                "fps": 30.062,
+                "frames": 31,
+                "simMs": {
+                    "mean": 16.339,
+                    "p50": 16.7,
+                    "p95": 17.6,
+                    "p99": 17.7,
+                    "max": 17.7
+                },
+                "frameMs": {
+                    "mean": 16.597,
+                    "p50": 17,
+                    "p95": 17.9,
+                    "p99": 17.9,
+                    "max": 17.9
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 138,
+                "killsTotal": 2610,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 17,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 931,
+                "t": 1306.643,
+                "wallClock": "2026-09-15T10:10:56.125Z",
+                "fps": 29.994,
+                "frames": 30,
+                "simMs": {
+                    "mean": 15.52,
+                    "p50": 15.5,
+                    "p95": 15.8,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "frameMs": {
+                    "mean": 15.8,
+                    "p50": 15.8,
+                    "p95": 16,
+                    "p99": 16.5,
+                    "max": 16.5
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2610,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 932,
+                "t": 1307.675,
+                "wallClock": "2026-09-15T10:10:57.157Z",
+                "fps": 30.033,
+                "frames": 31,
+                "simMs": {
+                    "mean": 15.535,
+                    "p50": 15.6,
+                    "p95": 16.2,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "frameMs": {
+                    "mean": 15.794,
+                    "p50": 15.8,
+                    "p95": 16.6,
+                    "p99": 16.7,
+                    "max": 16.7
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 88,
+                "killsTotal": 2698,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 1,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 933,
+                "t": 1308.676,
+                "wallClock": "2026-09-15T10:10:58.158Z",
+                "fps": 29.958,
+                "frames": 30,
+                "simMs": {
+                    "mean": 15.603,
+                    "p50": 15.6,
+                    "p95": 15.9,
+                    "p99": 15.9,
+                    "max": 15.9
+                },
+                "frameMs": {
+                    "mean": 15.887,
+                    "p50": 15.9,
+                    "p95": 16.2,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 2698,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 934,
+                "t": 1309.708,
+                "wallClock": "2026-09-15T10:10:59.191Z",
+                "fps": 30.036,
+                "frames": 31,
+                "simMs": {
+                    "mean": 15.319,
+                    "p50": 15.3,
+                    "p95": 15.8,
+                    "p99": 16,
+                    "max": 16
+                },
+                "frameMs": {
+                    "mean": 15.61,
+                    "p50": 15.6,
+                    "p95": 16.1,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 97,
+                "killsTotal": 2795,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 935,
+                "t": 1310.71,
+                "wallClock": "2026-09-15T10:11:00.192Z",
+                "fps": 29.961,
+                "frames": 30,
+                "simMs": {
+                    "mean": 15.503,
+                    "p50": 15.5,
+                    "p95": 16.2,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "frameMs": {
+                    "mean": 15.76,
+                    "p50": 15.8,
+                    "p95": 16.5,
+                    "p99": 16.5,
+                    "max": 16.5
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 2,
+                "killsTotal": 2797,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 936,
+                "t": 1311.71,
+                "wallClock": "2026-09-15T10:11:01.192Z",
+                "fps": 29.991,
+                "frames": 30,
+                "simMs": {
+                    "mean": 15.477,
+                    "p50": 15.5,
+                    "p95": 16.1,
+                    "p99": 16.2,
+                    "max": 16.2
+                },
+                "frameMs": {
+                    "mean": 15.74,
+                    "p50": 15.8,
+                    "p95": 16.3,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 153,
+                "killsTotal": 2950,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 937,
+                "t": 1312.741,
+                "wallClock": "2026-09-15T10:11:02.223Z",
+                "fps": 30.059,
+                "frames": 31,
+                "simMs": {
+                    "mean": 15.381,
+                    "p50": 15.4,
+                    "p95": 15.7,
+                    "p99": 15.8,
+                    "max": 15.8
+                },
+                "frameMs": {
+                    "mean": 15.642,
+                    "p50": 15.6,
+                    "p95": 16,
+                    "p99": 16,
+                    "max": 16
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 1,
+                "killsTotal": 2951,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 938,
+                "t": 1313.744,
+                "wallClock": "2026-09-15T10:11:03.226Z",
+                "fps": 29.931,
+                "frames": 30,
+                "simMs": {
+                    "mean": 15.39,
+                    "p50": 15.3,
+                    "p95": 15.9,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "frameMs": {
+                    "mean": 15.667,
+                    "p50": 15.6,
+                    "p95": 16.1,
+                    "p99": 16.6,
+                    "max": 16.6
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 108,
+                "killsTotal": 3059,
+                "auraPulses": 1,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            },
+            {
+                "seq": 939,
+                "t": 1314.776,
+                "wallClock": "2026-09-15T10:11:04.259Z",
+                "fps": 30.018,
+                "frames": 31,
+                "simMs": {
+                    "mean": 15.626,
+                    "p50": 15.6,
+                    "p95": 16.3,
+                    "p99": 16.3,
+                    "max": 16.3
+                },
+                "frameMs": {
+                    "mean": 15.887,
+                    "p50": 15.9,
+                    "p95": 16.6,
+                    "p99": 16.6,
+                    "max": 16.6
+                },
+                "entities": 2500,
+                "slots": 2500,
+                "kills": 0,
+                "killsTotal": 3059,
+                "auraPulses": 0,
+                "collisionMode": "BruteForce",
+                "memoryMode": "AoS",
+                "distribution": "Uniform",
+                "longFrames": 0,
+                "budgetMs": 16.667
+            }
+        ]
+    }
+}
