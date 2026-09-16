@@ -40,7 +40,9 @@ static void initSeeded(EngineCore& self, int count, unsigned seed) { self.init(c
 EMSCRIPTEN_BINDINGS(VampireCore) {
     enum_<CollisionMode>("CollisionMode")
         .value("BruteForce", CollisionMode::BruteForce)
-        .value("QuadTree",   CollisionMode::QuadTree);
+        .value("QuadTree",   CollisionMode::QuadTree)
+        .value("UniformGrid", CollisionMode::UniformGrid)
+        .value("SpatialHash", CollisionMode::SpatialHash);
 
     enum_<MemoryMode>("MemoryMode")
         .value("AoS", MemoryMode::AoS)

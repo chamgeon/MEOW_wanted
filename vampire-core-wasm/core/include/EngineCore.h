@@ -7,7 +7,7 @@
 #include "Spawn.h"
 #include <vector>
 
-enum class CollisionMode { BruteForce, QuadTree };
+enum class CollisionMode { BruteForce, QuadTree, UniformGrid, SpatialHash };
 enum class MemoryMode    { AoS, SoA };
 
 struct Projectile {
@@ -120,6 +120,9 @@ public:
 private:
     void updateRepulsionBruteForce(float dt);
     void updateRepulsionQuadTree(float dt);
+    void updateRepulsionUniformGrid(float dt);
+    void updateRepulsionSpatialHash(float dt);
+    void updateRepulsionSpatial(float dt, bool hashed);
     void updateProjectiles(float dt);
     void updateAura(float dt);
     void fireAura();
