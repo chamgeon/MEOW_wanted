@@ -47,6 +47,22 @@ void QuadTree::insert(const QTEntry& entry) {
     children_[childIndex(entry.x, entry.y)]->insert(entry);
 }
 
+bool QuadTree::remove(int index, float x, float y) {
+    if (!bounds_.contains(x, y)) return false;
+
+    // Mirror insert()'s routing exactly: a divided node holds nothing itself,
+    // and an undivided one holds everything that reached it.
+    if (!divided_) {
+        const auto it = std::find_if(entries_.begin(), entries_.end(),
+                                     [index](const QTEntry& e) { return e.index == index; });
+        if (it == entries_.end()) return false;
+        entries_.erase(it);
+        return true;
+    }
+
+    return children_[childIndex(x, y)]->remove(index, x, y);
+}
+
 void QuadTree::query(const AABB& range, std::vector<int>& out) const {
     if (!bounds_.intersects(range)) return;
 

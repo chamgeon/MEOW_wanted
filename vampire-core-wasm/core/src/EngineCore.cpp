@@ -663,8 +663,9 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
 
         for (int i = 0; i < soa_.size; ++i) {
             if (!soa_.alive[i]) continue;
+            const float oldX = soa_.posX[i], oldY = soa_.posY[i];
             neighbors.clear();
-            quadTree_.query({soa_.posX[i], soa_.posY[i], sep, sep}, neighbors);
+            quadTree_.query({oldX, oldY, sep, sep}, neighbors);
             float fx = 0.f, fy = 0.f;
             for (int j : neighbors) {
                 if (i == j) continue;
@@ -677,8 +678,15 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
                     fx += dx/d * f; fy += dy/d * f;
                 }
             }
-            soa_.posX[i] = std::clamp(soa_.posX[i] + fx * dt, 0.f, Config::WORLD_WIDTH);
-            soa_.posY[i] = std::clamp(soa_.posY[i] + fy * dt, 0.f, Config::WORLD_HEIGHT);
+            const float nx = std::clamp(oldX + fx * dt, 0.f, Config::WORLD_WIDTH);
+            const float ny = std::clamp(oldY + fy * dt, 0.f, Config::WORLD_HEIGHT);
+            soa_.posX[i] = nx;
+            soa_.posY[i] = ny;
+            // Keep the index in step with the world, as the grid path does.
+            if (nx != oldX || ny != oldY) {
+                quadTree_.remove(i, oldX, oldY);
+                quadTree_.insert({nx, ny, i});
+            }
         }
     } else {
         auto& e = aos_.enemies;
@@ -687,8 +695,9 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
 
         for (int i = 0; i < (int)e.size(); ++i) {
             if (!e[i].alive) continue;
+            const float oldX = e[i].position.x, oldY = e[i].position.y;
             neighbors.clear();
-            quadTree_.query({e[i].position.x, e[i].position.y, sep, sep}, neighbors);
+            quadTree_.query({oldX, oldY, sep, sep}, neighbors);
             Vector2D force{};
             for (int j : neighbors) {
                 if (i == j) continue;
@@ -700,8 +709,14 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
                     force += d / dist * f;
                 }
             }
-            e[i].position.x = std::clamp(e[i].position.x + force.x * dt, 0.f, Config::WORLD_WIDTH);
-            e[i].position.y = std::clamp(e[i].position.y + force.y * dt, 0.f, Config::WORLD_HEIGHT);
+            const float nx = std::clamp(oldX + force.x * dt, 0.f, Config::WORLD_WIDTH);
+            const float ny = std::clamp(oldY + force.y * dt, 0.f, Config::WORLD_HEIGHT);
+            e[i].position.x = nx;
+            e[i].position.y = ny;
+            if (nx != oldX || ny != oldY) {
+                quadTree_.remove(i, oldX, oldY);
+                quadTree_.insert({nx, ny, i});
+            }
         }
     }
 }
