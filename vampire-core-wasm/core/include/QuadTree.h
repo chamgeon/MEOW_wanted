@@ -26,6 +26,16 @@ public:
 
     void clear();
     void insert(const QTEntry& entry);
+
+    // Unfile the entry for `index`, which must be given the same (x, y) it was
+    // inserted with -- routing is by position, so a stale coordinate descends
+    // into the wrong quadrant and finds nothing. Returns false if absent.
+    //
+    // Repulsion moves entities in place while it iterates, so without this the
+    // tree describes where the swarm was at the top of the tick and quietly
+    // drops neighbours that moved into range partway through it.
+    bool remove(int index, float x, float y);
+
     void query(const AABB& range, std::vector<int>& out) const;
 
 private:

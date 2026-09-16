@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <unordered_map>
 
 
 // ---- shared simulation rules --------------------------------------------
@@ -341,6 +343,7 @@ void EngineCore::init(int enemyCount, unsigned seed) {
     rebuildWorld(enemyCount);
     projectiles_.assign(Config::MAX_PROJECTILES, {});
     for (auto& p : projectiles_) p.alive = false;
+    fireTimer_ = 0.f;
     playerPos_  = {Config::WORLD_WIDTH * 0.5f, Config::WORLD_HEIGHT * 0.5f};
     auraTimer_  = Config::AURA_INTERVAL;
     auraFlash_  = 0.f;
@@ -406,10 +409,12 @@ void EngineCore::tick(float dt) {
     else
         aos_.update(dt, simTime_, playerPos_);
 
-    if (collisionMode_ == CollisionMode::BruteForce)
-        updateRepulsionBruteForce(dt);
-    else
-        updateRepulsionQuadTree(dt);
+    switch (collisionMode_) {
+        case CollisionMode::BruteForce: updateRepulsionBruteForce(dt); break;
+        case CollisionMode::QuadTree: updateRepulsionQuadTree(dt); break;
+        case CollisionMode::UniformGrid: updateRepulsionUniformGrid(dt); break;
+        case CollisionMode::SpatialHash: updateRepulsionSpatialHash(dt); break;
+    }
 
     updateAura(dt);
 
@@ -658,8 +663,9 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
 
         for (int i = 0; i < soa_.size; ++i) {
             if (!soa_.alive[i]) continue;
+            const float oldX = soa_.posX[i], oldY = soa_.posY[i];
             neighbors.clear();
-            quadTree_.query({soa_.posX[i], soa_.posY[i], sep, sep}, neighbors);
+            quadTree_.query({oldX, oldY, sep, sep}, neighbors);
             float fx = 0.f, fy = 0.f;
             for (int j : neighbors) {
                 if (i == j) continue;
@@ -672,8 +678,15 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
                     fx += dx/d * f; fy += dy/d * f;
                 }
             }
-            soa_.posX[i] = std::clamp(soa_.posX[i] + fx * dt, 0.f, Config::WORLD_WIDTH);
-            soa_.posY[i] = std::clamp(soa_.posY[i] + fy * dt, 0.f, Config::WORLD_HEIGHT);
+            const float nx = std::clamp(oldX + fx * dt, 0.f, Config::WORLD_WIDTH);
+            const float ny = std::clamp(oldY + fy * dt, 0.f, Config::WORLD_HEIGHT);
+            soa_.posX[i] = nx;
+            soa_.posY[i] = ny;
+            // Keep the index in step with the world, as the grid path does.
+            if (nx != oldX || ny != oldY) {
+                quadTree_.remove(i, oldX, oldY);
+                quadTree_.insert({nx, ny, i});
+            }
         }
     } else {
         auto& e = aos_.enemies;
@@ -682,8 +695,9 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
 
         for (int i = 0; i < (int)e.size(); ++i) {
             if (!e[i].alive) continue;
+            const float oldX = e[i].position.x, oldY = e[i].position.y;
             neighbors.clear();
-            quadTree_.query({e[i].position.x, e[i].position.y, sep, sep}, neighbors);
+            quadTree_.query({oldX, oldY, sep, sep}, neighbors);
             Vector2D force{};
             for (int j : neighbors) {
                 if (i == j) continue;
@@ -695,8 +709,98 @@ void EngineCore::updateRepulsionQuadTree(float dt) {
                     force += d / dist * f;
                 }
             }
-            e[i].position.x = std::clamp(e[i].position.x + force.x * dt, 0.f, Config::WORLD_WIDTH);
-            e[i].position.y = std::clamp(e[i].position.y + force.y * dt, 0.f, Config::WORLD_HEIGHT);
+            const float nx = std::clamp(oldX + force.x * dt, 0.f, Config::WORLD_WIDTH);
+            const float ny = std::clamp(oldY + force.y * dt, 0.f, Config::WORLD_HEIGHT);
+            e[i].position.x = nx;
+            e[i].position.y = ny;
+            if (nx != oldX || ny != oldY) {
+                quadTree_.remove(i, oldX, oldY);
+                quadTree_.insert({nx, ny, i});
+            }
+        }
+    }
+}
+
+void EngineCore::updateRepulsionUniformGrid(float dt) {
+    updateRepulsionSpatial(dt, false);
+}
+
+void EngineCore::updateRepulsionSpatialHash(float dt) {
+    updateRepulsionSpatial(dt, true);
+}
+
+// Both spatial modes share the same force rule and in-place update order as
+// BruteForce. Only the cell container changes: a dense array for UniformGrid
+// or populated-cell lookup for SpatialHash. Moving an updated entity between
+// cells matters because later i values must see its *new* position.
+void EngineCore::updateRepulsionSpatial(float dt, bool hashed) {
+    const float sep = Config::REPULSION_RADIUS;
+    const float sepSq = sep * sep;
+    const int cols = static_cast<int>(std::ceil(Config::WORLD_WIDTH / sep)) + 1;
+    const int rows = static_cast<int>(std::ceil(Config::WORLD_HEIGHT / sep)) + 1;
+    const bool useSoA = memoryMode_ == MemoryMode::SoA;
+    const int n = useSoA ? soa_.size : static_cast<int>(aos_.enemies.size());
+    auto alive = [&](int i) { return useSoA ? soa_.alive[i] != 0 : aos_.enemies[i].alive; };
+    auto x = [&](int i) { return useSoA ? soa_.posX[i] : aos_.enemies[i].position.x; };
+    auto y = [&](int i) { return useSoA ? soa_.posY[i] : aos_.enemies[i].position.y; };
+    auto cellX = [&](float value) { return std::clamp(static_cast<int>(value / sep), 0, cols - 1); };
+    auto cellY = [&](float value) { return std::clamp(static_cast<int>(value / sep), 0, rows - 1); };
+    auto hashKey = [](int cx, int cy) {
+        return (static_cast<std::uint64_t>(cy) << 32) | static_cast<unsigned>(cx);
+    };
+
+    std::vector<std::vector<int>> dense;
+    std::unordered_map<std::uint64_t, std::vector<int>> sparse;
+    if (hashed) sparse.reserve(static_cast<size_t>(n));
+    else dense.resize(static_cast<size_t>(cols) * rows);
+
+    auto findCell = [&](int cx, int cy) -> std::vector<int>* {
+        if (cx < 0 || cx >= cols || cy < 0 || cy >= rows) return nullptr;
+        if (!hashed) return &dense[static_cast<size_t>(cy) * cols + cx];
+        auto it = sparse.find(hashKey(cx, cy));
+        return it == sparse.end() ? nullptr : &it->second;
+    };
+    auto addToCell = [&](int cx, int cy, int index) {
+        if (hashed) sparse[hashKey(cx, cy)].push_back(index);
+        else dense[static_cast<size_t>(cy) * cols + cx].push_back(index);
+    };
+
+    for (int j = 0; j < n; ++j)
+        if (alive(j)) addToCell(cellX(x(j)), cellY(y(j)), j);
+
+    std::vector<int> neighbors;
+    for (int i = 0; i < n; ++i) {
+        if (!alive(i)) continue;
+        const int oldX = cellX(x(i)), oldY = cellY(y(i));
+        neighbors.clear();
+        for (int cy = oldY - 1; cy <= oldY + 1; ++cy)
+            for (int cx = oldX - 1; cx <= oldX + 1; ++cx)
+                if (const auto* bucket = findCell(cx, cy))
+                    neighbors.insert(neighbors.end(), bucket->begin(), bucket->end());
+        // BruteForce visits j in ascending index order. Keep floating-point
+        // accumulation identical even though cell iteration order differs.
+        std::sort(neighbors.begin(), neighbors.end());
+        float fx = 0.f, fy = 0.f;
+        for (int j : neighbors) {
+            if (i == j || !alive(j)) continue;
+            const float dx = x(i) - x(j), dy = y(i) - y(j);
+            const float d2 = dx * dx + dy * dy;
+            if (d2 < sepSq && d2 > 1e-6f) {
+                const float d = std::sqrt(d2);
+                const float f = (sep - d) / sep * Config::REPULSION_FORCE;
+                fx += dx / d * f;
+                fy += dy / d * f;
+            }
+        }
+        const float nx = std::clamp(x(i) + fx * dt, 0.f, Config::WORLD_WIDTH);
+        const float ny = std::clamp(y(i) + fy * dt, 0.f, Config::WORLD_HEIGHT);
+        if (useSoA) { soa_.posX[i] = nx; soa_.posY[i] = ny; }
+        else { aos_.enemies[i].position.x = nx; aos_.enemies[i].position.y = ny; }
+        const int newX = cellX(nx), newY = cellY(ny);
+        if (newX != oldX || newY != oldY) {
+            auto* previous = findCell(oldX, oldY);
+            if (previous) previous->erase(std::remove(previous->begin(), previous->end(), i), previous->end());
+            addToCell(newX, newY, i);
         }
     }
 }

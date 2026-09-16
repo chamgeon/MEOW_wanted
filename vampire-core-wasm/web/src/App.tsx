@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import GameCanvas from './components/GameCanvas';
 import MetricGraph from './components/MetricGraph';
 import CodePanel from './components/CodePanel';
+import AgentExperimentPanel from './components/AgentExperimentPanel';
 import { PerfLogger, downloadNdjson } from './logging/PerfLogger';
 import type { PerfRecord } from './logging/PerfLogger';
 
-export type CollisionMode = 'BruteForce' | 'QuadTree';
+export type CollisionMode = 'BruteForce' | 'QuadTree' | 'UniformGrid' | 'SpatialHash';
 export type MemoryMode    = 'AoS' | 'SoA';
 
 // The scenario axis. Collision and Memory choose which code runs; this chooses
@@ -24,7 +25,7 @@ export interface PerfSample {
 
 export interface WasmModule {
   EngineCore:    new () => EngineHandle;
-  CollisionMode: { BruteForce: number; QuadTree: number };
+  CollisionMode: { BruteForce: number; QuadTree: number; UniformGrid: number; SpatialHash: number };
   MemoryMode:    { AoS: number; SoA: number };
   SpawnDistribution: { Uniform: number; Clustered: number };
   HEAPF32:       Float32Array;
@@ -89,6 +90,9 @@ export default function App() {
   const [memoryMode,    setMemoryMode]    = useState<MemoryMode>('SoA');
   const [spawnDist,     setSpawnDist]     = useState<SpawnDist>('Uniform');
   const [enemyCount,    setEnemyCount]    = useState(5000);
+  const [enemyDraft,    setEnemyDraft]    = useState(5000);
+  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const [safetyNotice, setSafetyNotice] = useState('');
   const [history,       setHistory]       = useState<PerfSample[]>([]);
   const [wasmReady,     setWasmReady]     = useState(false);
   const [logRecord,     setLogRecord]     = useState<PerfRecord | null>(null);
@@ -110,6 +114,7 @@ export default function App() {
     collision: 'QuadTree' as CollisionMode,
     memory:    'SoA'      as MemoryMode,
     dist:      'Uniform'  as SpawnDist,
+    speed:     1,
   });
 
   // Same reason as modeRef: the loop's closure is built once, at [wasmReady],
@@ -200,7 +205,7 @@ export default function App() {
         if (k.has('ArrowDown')  || k.has('s') || k.has('S')) dy += 1;
         engine.setPlayerInput(dx, dy);
 
-        engine.tick(dt);
+        engine.tick(dt * modeRef.current.speed);
         canvasApiRef.current?.draw();
 
         const frameEnd = performance.now();
@@ -226,6 +231,7 @@ export default function App() {
             collisionMode: modeRef.current.collision,
             memoryMode:    modeRef.current.memory,
             distribution:  modeRef.current.dist,
+            speedMultiplier: modeRef.current.speed,
             slots:         engine.getEntityCount(),
             entities:      s.aliveEnemies,
             killsTotal:    s.kills,
@@ -327,18 +333,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [togglePause]);
 
-  const toggleCollision = useCallback(() => {
-    const next: CollisionMode = collisionMode === 'QuadTree' ? 'BruteForce' : 'QuadTree';
+  const changeCollision = useCallback((next: CollisionMode) => {
+    if (next === collisionMode) return;
+    if (next === 'BruteForce' && enemyCount > 10000) {
+      setSafetyNotice('BruteForce는 10,000명까지 선택할 수 있습니다. 100,000명 실험은 공간 분할 모드를 사용하세요.');
+      return;
+    }
+    setSafetyNotice('');
     setCollisionMode(next);
     modeRef.current.collision = next;
     loggerRef.current!.mark('collisionMode', collisionMode, next);
     const mod = moduleRef.current;
     if (engineRef.current && mod)
-      engineRef.current.setCollisionMode(
-        next === 'BruteForce' ? mod.CollisionMode.BruteForce : mod.CollisionMode.QuadTree,
-      );
+      engineRef.current.setCollisionMode(mod.CollisionMode[next]);
     resetHistory();
-  }, [collisionMode, resetHistory]);
+  }, [collisionMode, enemyCount, resetHistory]);
 
   const toggleMemory = useCallback(() => {
     const next: MemoryMode = memoryMode === 'SoA' ? 'AoS' : 'SoA';
@@ -346,8 +355,12 @@ export default function App() {
     modeRef.current.memory = next;
     loggerRef.current!.mark('memoryMode', memoryMode, next);
     const mod = moduleRef.current;
-    if (engineRef.current && mod)
+    if (engineRef.current && mod) {
       engineRef.current.setMemoryMode(next === 'AoS' ? mod.MemoryMode.AoS : mod.MemoryMode.SoA);
+      // The inactive layout is not advanced each tick. Start the new layout
+      // from the same seed instead of displaying an old, frozen world state.
+      engineRef.current.init(engineRef.current.getEntityCount());
+    }
     resetHistory();
   }, [memoryMode, resetHistory]);
 
@@ -359,6 +372,8 @@ export default function App() {
   const toggleDistribution = useCallback(() => {
     const next: SpawnDist = spawnDist === 'Uniform' ? 'Clustered' : 'Uniform';
     setSpawnDist(next);
+    if (next === 'Clustered' && enemyCount >= 50000)
+      setSafetyNotice('고밀도 50,000명 이상은 한 프레임에 수백 ms~1초 이상 걸릴 수 있습니다.');
     modeRef.current.dist = next;
     loggerRef.current!.mark('distribution', spawnDist, next);
     const mod = moduleRef.current;
@@ -367,14 +382,63 @@ export default function App() {
         next === 'Clustered' ? mod.SpawnDistribution.Clustered : mod.SpawnDistribution.Uniform,
       );
     resetHistory();
-  }, [spawnDist, resetHistory]);
+  }, [spawnDist, enemyCount, resetHistory]);
 
   const changeEnemyCount = useCallback((n: number) => {
+    if (n === enemyCount) return;
+    const engine = engineRef.current;
+    const mod = moduleRef.current;
+    if (n > 10000 && modeRef.current.collision === 'BruteForce' && engine && mod) {
+      loggerRef.current!.mark('collisionMode', 'BruteForce', 'UniformGrid');
+      modeRef.current.collision = 'UniformGrid';
+      setCollisionMode('UniformGrid');
+      engine.setCollisionMode(mod.CollisionMode.UniformGrid);
+      setSafetyNotice('10,000명을 넘겨 BruteForce에서 UniformGrid로 전환했습니다.');
+    } else {
+      setSafetyNotice(n >= 50000
+        ? '50,000명 이상에서는 프레임이 크게 느려질 수 있습니다. BruteForce는 10,000명으로 제한됩니다.'
+        : '');
+    }
     loggerRef.current!.mark('entityCount', String(enemyCount), String(n));
     setEnemyCount(n);
-    engineRef.current?.setEnemyCount(n);
+    setEnemyDraft(n);
+    engine?.setEnemyCount(n);
     resetHistory();
   }, [enemyCount, resetHistory]);
+
+  const changeSpeed = useCallback((next: number) => {
+    if (next === speedMultiplier) return;
+    loggerRef.current!.mark('speedMultiplier', String(speedMultiplier), String(next));
+    modeRef.current.speed = next;
+    setSpeedMultiplier(next);
+    loggerRef.current!.resumeAfterGap();
+    resetHistory();
+  }, [speedMultiplier, resetHistory]);
+
+  const applyRecommendation = useCallback((collision: CollisionMode, memory: MemoryMode) => {
+    const engine = engineRef.current;
+    const mod = moduleRef.current;
+    if (!engine || !mod) return;
+    if (collision === 'BruteForce' && engine.getEntityCount() > 10000) {
+      setSafetyNotice('10,000명을 초과한 상태에서는 BruteForce 추천을 적용할 수 없습니다.');
+      return;
+    }
+    if (collision !== modeRef.current.collision) {
+      loggerRef.current!.mark('collisionMode', modeRef.current.collision, collision);
+      modeRef.current.collision = collision;
+      setCollisionMode(collision);
+      engine.setCollisionMode(mod.CollisionMode[collision]);
+    }
+    const memoryChanged = memory !== modeRef.current.memory;
+    if (memoryChanged) {
+      loggerRef.current!.mark('memoryMode', modeRef.current.memory, memory);
+      modeRef.current.memory = memory;
+      setMemoryMode(memory);
+      engine.setMemoryMode(mod.MemoryMode[memory]);
+    }
+    if (memoryChanged) engine.init(engine.getEntityCount());
+    resetHistory();
+  }, [resetHistory]);
 
   const latest = history[history.length - 1];
 
@@ -385,13 +449,36 @@ export default function App() {
         <div className="controls">
           <label className="ctrl-label">
             Enemies:
-            <input type="range" min={500} max={10000} step={500} value={enemyCount}
-              onChange={e => changeEnemyCount(Number(e.target.value))} />
-            <span className="ctrl-val">{enemyCount.toLocaleString()}</span>
+            <input type="range" min={500} max={100000} step={500} value={enemyDraft}
+              disabled={!wasmReady} title="손을 놓으면 적 수가 적용됩니다"
+              onChange={e => setEnemyDraft(Number(e.target.value))}
+              onPointerUp={e => changeEnemyCount(Number(e.currentTarget.value))}
+              onKeyUp={e => changeEnemyCount(Number(e.currentTarget.value))}
+              onBlur={e => changeEnemyCount(Number(e.currentTarget.value))} />
+            <span className="ctrl-val">{enemyDraft.toLocaleString()}</span>
           </label>
-          <button className={`toggle-btn ${collisionMode === 'QuadTree' ? 'on' : ''}`} onClick={toggleCollision}>
-            Collision: <strong>{collisionMode}</strong>
-          </button>
+          <label className="ctrl-label" htmlFor="collision-mode">
+            Collision:
+            <select id="collision-mode" className="mode-select" value={collisionMode}
+              disabled={!wasmReady}
+              onChange={e => changeCollision(e.target.value as CollisionMode)}>
+              <option value="BruteForce" disabled={enemyCount > 10000}>BruteForce</option>
+              <option value="QuadTree">QuadTree</option>
+              <option value="UniformGrid">UniformGrid</option>
+              <option value="SpatialHash">SpatialHash</option>
+            </select>
+          </label>
+          <label className="ctrl-label" htmlFor="simulation-speed">
+            Speed:
+            <select id="simulation-speed" className="mode-select" value={speedMultiplier}
+              disabled={!wasmReady} onChange={e => changeSpeed(Number(e.target.value))}>
+              <option value={0.25}>0.25×</option>
+              <option value={0.5}>0.5×</option>
+              <option value={1}>1×</option>
+              <option value={2}>2×</option>
+              <option value={4}>4×</option>
+            </select>
+          </label>
           <button className={`toggle-btn ${memoryMode === 'SoA' ? 'on' : ''}`} onClick={toggleMemory}>
             Memory: <strong>{memoryMode}</strong>
           </button>
@@ -416,6 +503,7 @@ export default function App() {
             {paused ? 'Resume' : 'Pause'} <kbd>Space</kbd>
           </button>
         </div>
+        {safetyNotice && <p className="hud-warn" role="status">{safetyNotice}</p>}
         {latest && (
           <div className="hud">
             <span className={latest.fps < 30 ? 'hud-bad' : 'hud-good'}>FPS: {latest.fps.toFixed(1)}</span>
@@ -461,6 +549,9 @@ export default function App() {
         <aside className="sidebar">
           <MetricGraph history={history} />
           <TelemetryBar record={logRecord} count={logCount} onDownload={() => downloadNdjson(loggerRef.current!)} />
+          <AgentExperimentPanel logger={loggerRef.current!} collisionMode={collisionMode}
+            memoryMode={memoryMode} distribution={spawnDist} speedMultiplier={speedMultiplier}
+            onApplyRecommendation={applyRecommendation} />
           <CodePanel
             stats={latest}
             collisionMode={collisionMode}
@@ -500,6 +591,7 @@ function TelemetryBar({ record, count, onDownload }: {
           <span>sim p99/max</span>  <b>{record.simMs.p99.toFixed(2)} / {record.simMs.max.toFixed(2)} ms</b>
           <span>frame p95</span>    <b>{record.frameMs.p95.toFixed(2)} ms</b>
           <span>entities</span>     <b>{record.entities.toLocaleString()} / {record.slots.toLocaleString()}</b>
+          <span>game speed</span>   <b>{record.speedMultiplier}×</b>
           <span>kills /s</span>     <b>{record.kills}</b>
           <span>over budget</span>
           <b className={record.longFrames > 0 ? 'hud-bad' : 'hud-good'}>

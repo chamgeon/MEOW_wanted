@@ -52,7 +52,9 @@ function Fail($msg)     { Write-Host "ERROR: $msg" -ForegroundColor Red; exit 1 
 # a failure that reads like "emsdk is broken" rather than "wrong call operator".
 Step 1 "Locating Emscripten SDK"
 
+$compiler = $null
 if (Get-Command em++ -ErrorAction SilentlyContinue) {
+    $compiler = (Get-Command em++).Source
     Write-Host "      em++ already on PATH - skipping activation."
 } else {
     $candidates = @()
@@ -68,11 +70,14 @@ if (Get-Command em++ -ErrorAction SilentlyContinue) {
     # compiler directory, not just the env script.
     $sdk = $null
     foreach ($c in $candidates) {
-        if ($c -and (Test-Path (Join-Path $c "upstream\emscripten\em++.bat"))) { $sdk = $c; break }
+        if ($c -and (Test-Path -LiteralPath $c) -and (
+            (Test-Path (Join-Path $c "upstream\emscripten\em++.bat")) -or
+            (Test-Path (Join-Path $c "upstream\emscripten\em++.exe"))
+        )) { $sdk = $c; break }
     }
 
     if (-not $sdk) {
-        $clone = $candidates | Where-Object { $_ -and (Test-Path (Join-Path $_ "emsdk.ps1")) } | Select-Object -First 1
+        $clone = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) -and (Test-Path (Join-Path $_ "emsdk.ps1")) } | Select-Object -First 1
         Write-Host "ERROR: no installed Emscripten SDK found." -ForegroundColor Red
         Write-Host "       Probed:"
         foreach ($c in $candidates) { if ($c) { Write-Host "         $c" } }
@@ -95,10 +100,15 @@ if (Get-Command em++ -ErrorAction SilentlyContinue) {
     }
 
     Write-Host "      Using $sdk"
-    . (Join-Path $sdk "emsdk_env.ps1") | Out-Null
-    if (-not (Get-Command em++ -ErrorAction SilentlyContinue)) {
-        Fail "activated $sdk but em++ still does not resolve. Try '.\emsdk.ps1 activate latest' in that directory."
+    $nativeCompiler = Join-Path $sdk "upstream\emscripten\em++.exe"
+    if (Test-Path -LiteralPath $nativeCompiler) {
+        $compiler = $nativeCompiler
+    } else {
+        . (Join-Path $sdk "emsdk_env.ps1") | Out-Null
+        $resolvedCompiler = Get-Command em++ -ErrorAction SilentlyContinue
+        if ($resolvedCompiler) { $compiler = $resolvedCompiler.Source }
     }
+    if (-not (Test-Path -LiteralPath $compiler)) { Fail "em++ not found in $sdk" }
 }
 
 # --- 2. Collect sources ----------------------------------------------------
@@ -150,7 +160,7 @@ $jsOut   = Join-Path $out "core_engine.js"
 $wasmOut = Join-Path $out "core_engine.wasm"
 
 Write-Host "      -> $jsOut"
-& em++ @flags @sources -o $jsOut
+& $compiler @flags @sources -o $jsOut
 if ($LASTEXITCODE -ne 0) { Fail "em++ exited with $LASTEXITCODE" }
 
 # --- 4. Report artifacts ---------------------------------------------------
@@ -181,7 +191,8 @@ if (-not $NoVerify) {
         # The scenario axis. Newest bindings go at the END of this list on
         # purpose: the whole point of the scan is to catch a stale artifact, and
         # the most recently added export is the one a stale build is missing.
-        "setSpawnDistribution", "getSpawnDistribution"
+        "setSpawnDistribution", "getSpawnDistribution",
+        "UniformGrid", "SpatialHash"
     )
     $blob = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($wasmOut))
     $missing = @($expected | Where-Object { -not $blob.Contains($_) })

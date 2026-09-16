@@ -32,6 +32,11 @@
 .ctrl-label { display: flex; align-items: center; gap: .4rem; color: var(--text2); }
 .ctrl-label input[type=range] { width: 120px; accent-color: var(--accent); }
 .ctrl-val { min-width: 3.5rem; color: var(--text); }
+.mode-select {
+  padding: .3rem .5rem; border: 1px solid var(--accent); border-radius: 4px;
+  background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+}
+.mode-select:disabled { opacity: .4; cursor: not-allowed; }
 
 .toggle-btn {
   padding: .3rem .7rem; border: 1px solid var(--border); border-radius: 4px;
@@ -193,3 +198,20 @@ kbd {
 }
 .analysis h4 { color: var(--green); font-size: .75rem; margin-bottom: .4rem; }
 .analysis pre { font-size: .72rem; line-height: 1.5; color: #9dc89d; white-space: pre-wrap; font-family: inherit; }
+
+/* Verified candidate experiment: compact enough for the existing sidebar. */
+.agent-experiment { padding: .6rem; border-bottom: 1px solid var(--border); max-height: 440px; overflow-y: auto; }
+.agent-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.agent-head h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; }
+.agent-head button { padding: .3rem .65rem; border: 1px solid var(--accent); border-radius: 4px; background: transparent; color: var(--accent); cursor: pointer; }
+.agent-head button:disabled { opacity: .5; cursor: wait; }
+.agent-note { color: var(--text2); font-size: .71rem; line-height: 1.45; margin: .4rem 0; }
+.agent-status, .agent-result { font-size: .76rem; padding: .35rem 0; }
+.agent-error { color: var(--red); font-size: .76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-advice { font-size: .74rem; white-space: pre-wrap; line-height: 1.45; max-height: 100px; overflow-y: auto; }
+.agent-candidate { border-top: 1px solid var(--border); padding: .45rem 0; font-size: .72rem; }
+.agent-candidate strong { margin-right: .5rem; }
+.agent-candidate p { color: var(--text2); overflow-wrap: anywhere; }
+.agent-candidate table { width: 100%; font-size: .69rem; border-collapse: collapse; margin: .35rem 0; }
+.agent-candidate th, .agent-candidate td { padding: .18rem .3rem; text-align: left; border-bottom: 1px solid var(--border); }
+.agent-candidate pre { max-height: 150px; overflow: auto; font-size: .67rem; white-space: pre; }

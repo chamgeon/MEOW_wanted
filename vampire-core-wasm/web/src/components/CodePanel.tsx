@@ -102,6 +102,38 @@ for (int i = 0; i < n; ++i) {
   e[i].position += force * dt;
 }`,
   },
+  UniformGrid: {
+    SoA: `// 설명용 요약: UniformGrid / SoA (실행 소스 원문 아님)
+// x/y 좌표는 posX[], posY[] 배열에 각각 저장
+for (int i = 0; i < n; ++i) grid[cell(posX[i], posY[i])].add(i);
+for (int i = 0; i < n; ++i) {
+  auto neighbors = grid.nearby(posX[i], posY[i]);
+  // 인접 셀의 적만 검사하고, 이동한 적의 셀을 갱신
+  applyRepulsion(i, neighbors);
+}`,
+    AoS: `// 설명용 요약: UniformGrid / AoS (실행 소스 원문 아님)
+// 각 Enemy 구조체에 위치와 상태를 함께 저장
+for (int i = 0; i < n; ++i) grid[cell(enemies[i].position)].add(i);
+for (int i = 0; i < n; ++i) {
+  auto neighbors = grid.nearby(enemies[i].position);
+  applyRepulsion(i, neighbors);
+}`,
+  },
+  SpatialHash: {
+    SoA: `// 설명용 요약: SpatialHash / SoA (실행 소스 원문 아님)
+// 사용 중인 셀만 해시 테이블에 저장
+for (int i = 0; i < n; ++i) cells[hash(posX[i], posY[i])].add(i);
+for (int i = 0; i < n; ++i) {
+  auto neighbors = adjacentHashedCells(posX[i], posY[i]);
+  applyRepulsion(i, neighbors);
+}`,
+    AoS: `// 설명용 요약: SpatialHash / AoS (실행 소스 원문 아님)
+for (int i = 0; i < n; ++i) cells[hash(enemies[i].position)].add(i);
+for (int i = 0; i < n; ++i) {
+  auto neighbors = adjacentHashedCells(enemies[i].position);
+  applyRepulsion(i, neighbors);
+}`,
+  },
 };
 
 // The aura runs in both modes and is a flat linear scan by design, so it is
@@ -186,6 +218,7 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
         </button>
       </div>
       <pre className="code-snippet"><code>{snippet}</code></pre>
+      <p className="agent-note">위 코드는 설명용 요약입니다. 게임은 빌드된 WASM의 실제 C++ 코드를 실행합니다.</p>
       {rec && (
         <div className={`recommendation ${agrees ? 'rec-agree' : 'rec-differ'}`}>
           <strong>

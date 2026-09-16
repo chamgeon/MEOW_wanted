@@ -32,7 +32,7 @@
 // comparable across machines and small enough to paste into a prompt.
 // ---------------------------------------------------------------------------
 
-export type CollisionMode = 'BruteForce' | 'QuadTree';
+export type CollisionMode = 'BruteForce' | 'QuadTree' | 'UniformGrid' | 'SpatialHash';
 export type MemoryMode    = 'AoS' | 'SoA';
 
 /**
@@ -78,6 +78,7 @@ export interface PerfRecord {
   collisionMode: CollisionMode;
   memoryMode:    MemoryMode;
   distribution:  SpawnDistribution;
+  speedMultiplier: number;
 
   /** Frames whose total cost exceeded the 60 FPS budget. The headline number. */
   longFrames: number;
@@ -90,6 +91,7 @@ export type MarkerKind =
   | 'memoryMode'
   | 'entityCount'
   | 'distribution'
+  | 'speedMultiplier'
   | 'pause';
 
 /**
@@ -141,6 +143,7 @@ export interface LoggerContext {
   collisionMode: CollisionMode;
   memoryMode:    MemoryMode;
   distribution:  SpawnDistribution;
+  speedMultiplier: number;
   slots:         number;
   entities:      number;
   killsTotal:    number;
@@ -229,6 +232,7 @@ export class PerfLogger {
     collisionMode: 'QuadTree',
     memoryMode:    'SoA',
     distribution:  'Uniform',
+    speedMultiplier: 1,
     slots:         0,
     entities:      0,
     killsTotal:    0,
@@ -342,11 +346,11 @@ export class PerfLogger {
    * user is actually looking at right now.
    */
   window(seconds = 30): TelemetrySession {
-    // Derived from intervalMs rather than assuming one record per second, so
-    // changing the emission rate cannot silently change the window length.
-    const n       = Math.max(1, Math.ceil((seconds * 1000) / this.intervalMs));
-    const records = this.records.slice(-n);
-    const from    = records.length ? records[0].t : 0;
+    // At 100,000 entities a frame may take over a second, so emission cannot
+    // stay at exactly 1 Hz. Select by wall-clock timestamps, not row count.
+    const newest = this.records[this.records.length - 1]?.t ?? 0;
+    const from = Math.max(0, newest - seconds);
+    const records = this.records.filter(record => record.t >= from);
     return {
       meta:    this.meta,
       markers: this.markers.filter(m => m.t >= from),
@@ -415,6 +419,7 @@ export class PerfLogger {
       collisionMode: this.ctx.collisionMode,
       memoryMode:    this.ctx.memoryMode,
       distribution:  this.ctx.distribution,
+      speedMultiplier: this.ctx.speedMultiplier,
 
       longFrames: this.longFrames,
       budgetMs:   r3(this.budgetMs),
@@ -501,6 +506,7 @@ export interface AgentSampleRow {
    *  collision_mode the right answer in one row and the wrong answer in the
    *  next, so it must not be dropped on the way out. */
   spawn_distribution: SpawnDistribution;
+  speed_multiplier: number;
 
   fps:    number;
   frames: number;
@@ -536,6 +542,7 @@ export function toAgentRow(r: PerfRecord, runId: string): AgentSampleRow {
     wall_clock: r.wallClock,
 
     spawn_distribution: r.distribution,
+    speed_multiplier: r.speedMultiplier,
 
     fps:    r.fps,
     frames: r.frames,
