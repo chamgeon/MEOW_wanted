@@ -347,6 +347,110 @@ def budget_pressure(records: list[dict[str, Any]]) -> list[Finding]:
         f"{over} of {frames} frames exceeded the budget ({over / frames * 100:.1f}%) "
         f"across {_n(len(records))}.")]
 
+import math
+
+MIN_TREND_SAMPLES = 4
+PROJECTION_HORIZON_S = 10.0
+
+
+def _normal_cdf(z: float) -> float:
+    """normal CDF, scipy 의존성 없이 math.erf로 계산."""
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _n_samples(n: int) -> str:
+    return f"{n} sample" + ("" if n == 1 else "s")
+
+
+def risk_projection(records: list[dict], markers: list[dict],
+                     horizon_s: float = PROJECTION_HORIZON_S,
+                     budget_ms: float | None = None) -> list[Finding]:
+    """Extrapolate the most recent segment's frame-cost trend forward.
+
+    WHY THIS IS SEPARATE FROM compare_markers / spike_shape
+
+    Every other finding in this file describes the series that already
+    happened. This one is the only forward-looking claim, so it is held to a
+    different standard: it must say how uncertain it is, not just that it is
+    uncertain. A single OLS fit on the current segment gives both a point
+    forecast and a standard error for that forecast; from the standard error
+    we get an actual probability of crossing the frame budget within
+    `horizon_s`, not a hedge word like "likely".
+
+    WHAT THIS DOES NOT CLAIM
+
+    This is a trend extrapolation from one run, not a population estimate
+    from repeated trials -- with one segment there is no cross-run variance
+    to learn from, only within-run scatter around a fitted line. The
+    confidence interval reported here is conditional on the fitted trend
+    continuing, which is exactly the assumption a real config change (a
+    marker) would break. That is stated in the text rather than left
+    implicit, for the same reason compare_markers names its confounds
+    instead of silently averaging over them.
+    """
+    if not records:
+        return []
+
+    seg = segments(records)[-1]  # 가장 최근 설정 구간만 사용
+    if len(seg) < MIN_TREND_SAMPLES:
+        return [Finding(
+            "Risk projection",
+            f"only {len(seg)} sample(s) in the current segment "
+            f"({_tag(seg[0])}); need at least {MIN_TREND_SAMPLES} to fit a "
+            f"trend, so no projection is made.")]
+
+    t0 = seg[0].get("t", 0.0)
+    xs = [r.get("t", 0.0) - t0 for r in seg]
+    ys = [_frm(r).get("mean", 0.0) for r in seg]
+    n = len(xs)
+
+    budget = budget_ms if budget_ms is not None else seg[0].get("budgetMs", 16.667)
+
+    x_bar = _mean(xs)
+    y_bar = _mean(ys)
+    Sxx = sum((x - x_bar) ** 2 for x in xs)
+    if Sxx <= 0.0:
+        return [Finding("Risk projection",
+                         "all samples in the current segment share the same "
+                         "timestamp; cannot fit a trend.")]
+
+    Sxy = sum((xs[i] - x_bar) * (ys[i] - y_bar) for i in range(n))
+    slope = Sxy / Sxx
+    intercept = y_bar - slope * x_bar
+
+    resid = [ys[i] - (intercept + slope * xs[i]) for i in range(n)]
+    s2 = sum(e ** 2 for e in resid) / (n - 2) if n > 2 else 0.0
+    s = math.sqrt(s2)
+
+    x0 = xs[-1] + horizon_s
+    y_pred = intercept + slope * x0
+    se_pred = s * math.sqrt(1.0 + 1.0 / n + (x0 - x_bar) ** 2 / Sxx) if s > 0 else 0.0
+
+    if se_pred <= 0.0:
+        prob = 1.0 if y_pred > budget else 0.0
+        ci_lo = ci_hi = y_pred
+    else:
+        z = (budget - y_pred) / se_pred
+        prob = 1.0 - _normal_cdf(z)
+        ci_lo = y_pred - 1.645 * se_pred
+        ci_hi = y_pred + 1.645 * se_pred
+
+    trend_word = ("rising" if slope > 0.01 else
+                  "falling" if slope < -0.01 else "flat")
+
+    text = (
+        f"{_tag(seg[0])} at N={seg[0].get('entities', 0)}, current segment "
+        f"({_n_samples(n)}): frame mean trend is {trend_word} "
+        f"({slope:+.3f} ms/s). Projected frame mean at t+{horizon_s:.0f}s: "
+        f"{y_pred:.2f} ms (90% interval {ci_lo:.2f}-{ci_hi:.2f} ms) vs "
+        f"budget {budget:.2f} ms -> estimated probability of exceeding "
+        f"budget by then: {prob*100:.0f}%. "
+        f"CAVEAT: single-run trend extrapolation, not a population estimate; "
+        f"assumes no further config change in this window."
+    )
+    return [Finding(f"Risk projection (+{horizon_s:.0f}s)", text)]
+
+
 
 def analyze(telemetry: dict[str, Any] | None) -> list[Finding]:
     records = (telemetry or {}).get("records") or []
@@ -376,6 +480,7 @@ def analyze(telemetry: dict[str, Any] | None) -> list[Finding]:
     findings += aura_correlation(records)
     findings += renderer_share(records)
     findings += budget_pressure(records)
+    findings += risk_projection(records, markers)
     return findings
 
 
