@@ -17,10 +17,17 @@ class OpenAIEndpointTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(main.os.environ, {"OPENAI_API_KEY": "test"}), \
              patch.object(main.openai, "AsyncOpenAI", return_value=client):
             order, advisor_mode, advice = await main._plan(
-                request, {"simMedianMs": 4}, main.source_snapshot())
+                request, {"simMedianMs": 4},
+                [{"label": "Budget", "text": "3 of 180 frames exceeded the budget"}],
+                main.source_snapshot())
         self.assertEqual(order, ["SpatialHash", "QuadTree", "UniformGrid"])
         self.assertEqual(advisor_mode, "OpenAI advisor")
         self.assertEqual(advice, "test")
+        # Structured input, not folded into observations: the two carry different
+        # warranties and must stay distinguishable to the advisor.
+        sent = main.json.loads(create.await_args.kwargs["input"])
+        self.assertEqual(sent["findings"][0]["label"], "Budget")
+        self.assertEqual(sent["observations"], {"simMedianMs": 4})
 
     async def test_legacy_analysis_still_uses_its_existing_contract(self):
         create = AsyncMock(return_value=SimpleNamespace(

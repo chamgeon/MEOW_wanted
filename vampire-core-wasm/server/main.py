@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from analyze import analyze
 from prompts import SYSTEM_PROMPT, build_user_prompt
 from agent_candidates import comparison_algorithms
 from agent_pipeline import (GENERATED, MAX_BRUTE_FORCE_ENEMIES, diagnostic_source,
@@ -211,7 +212,7 @@ class OptimizationJobRequest(BaseModel):
     telemetry: dict[str, Any]
 
 
-async def _plan(req: OptimizationJobRequest, observations: dict,
+async def _plan(req: OptimizationJobRequest, observations: dict, findings: list[dict],
                 source: dict) -> tuple[list[str], str, str | None]:
     available = comparison_algorithms(req.collisionMode)
     key = os.environ.get("OPENAI_API_KEY")
@@ -222,13 +223,20 @@ async def _plan(req: OptimizationJobRequest, observations: dict,
         response = await client.responses.create(
             model=os.environ.get("AGENT_MODEL", "gpt-4.1-mini"),
             max_output_tokens=650,
-            instructions=("You are a C++ game performance advisor. Read the real active source and "
-                          "observations. Return JSON only: {\"candidates\":[IDs in priority order],"
+            instructions=("You are a C++ game performance advisor. Read the real active source, "
+                          "observations and findings. Return JSON only: "
+                          "{\"candidates\":[IDs in priority order],"
                           "\"reason\":\"concise Korean analysis with uncertainty\"}. "
                           "Use only offered IDs; symptoms are hypotheses, not proof. "
                           "If frame time rises but sim time does not, explain that the C++ "
-                          "collision path may not be the bottleneck."),
+                          "collision path may not be the bottleneck. "
+                          "findings[] is arithmetic the server computed over the same window: "
+                          "take those numbers as given rather than recomputing them. They are "
+                          "measurements, never recommendations, and a finding whose text "
+                          "contains a CAVEAT cannot by itself justify ranking a candidate "
+                          "first -- say what further evidence would be needed instead."),
             input=json.dumps({"available": available, "observations": observations,
+                              "findings": findings,
                               "activeSource": diagnostic_source(source, req.collisionMode)},
                              ensure_ascii=False),
         )
@@ -265,7 +273,16 @@ async def _process_optimization(job_id: str, req: OptimizationJobRequest) -> Non
                 raise ValueError("Source changed while the experiment was queued")
             observations = process_log(req.telemetry["records"], req.collisionMode,
                                        req.memoryMode, req.distribution, req.speedMultiplier)
-            plan, advisor_mode, advice = await _plan(req, observations, snapshot)
+
+            # process_log filters to the requested mode, discarding the other side of
+            # every toggle -- which is the evidence analyze recovers.
+            try:
+                findings = [{"label": f.label, "text": f.text} for f in analyze(req.telemetry)]
+            except Exception:
+                findings = []
+            job.update(findings=findings)
+
+            plan, advisor_mode, advice = await _plan(req, observations, findings, snapshot)
             job.update(advisorMode=advisor_mode, aiAdvice=advice, plannedCandidates=plan)
             _save_optimization(job_id)
 
