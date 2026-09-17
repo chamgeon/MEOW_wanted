@@ -215,3 +215,75 @@ kbd {
 .agent-candidate table { width: 100%; font-size: .69rem; border-collapse: collapse; margin: .35rem 0; }
 .agent-candidate th, .agent-candidate td { padding: .18rem .3rem; text-align: left; border-bottom: 1px solid var(--border); }
 .agent-candidate pre { max-height: 150px; overflow: auto; font-size: .67rem; white-space: pre; }
+
+/* Launcher row shared by both AI panels: the run button plus the open/close
+   control for its report window. */
+.panel-actions { display: flex; align-items: center; gap: .35rem; }
+.ghost-btn {
+  padding: .25rem .55rem; border: 1px solid var(--border); border-radius: 4px;
+  background: transparent; color: var(--text2); cursor: pointer;
+  font: inherit; font-size: .7rem; transition: all .15s;
+}
+.ghost-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.apply-btn {
+  margin-top: .5rem; padding: .35rem .8rem; border: 1px solid var(--green);
+  border-radius: 4px; background: transparent; color: var(--green);
+  cursor: pointer; font: inherit; font-size: .78rem;
+}
+.apply-btn:hover { background: var(--green); color: #08120a; }
+
+/* ---- Pop-out report windows -------------------------------------------
+   The popup clones this stylesheet, so everything above is already in scope
+   there. What is left is undoing the sidebar's space constraints: the panels
+   were capped and scroll-boxed to survive in 480 px, and in a 1040 px window
+   those caps are the only thing still hiding the report. */
+.popup-body { background: var(--bg); color: var(--text); min-height: 100vh; }
+.popup-root { max-width: 1040px; margin: 0 auto; padding: 0 1.2rem 2.5rem; }
+
+.popup-titlebar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+  padding: .9rem 0 .7rem; margin-bottom: .9rem;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.popup-titlebar h2 { font-size: 1rem; }
+.popup-sub { margin-top: .25rem; font-size: .75rem; color: var(--text2); }
+.popup-close {
+  flex-shrink: 0; padding: .3rem .7rem; border: 1px solid var(--border);
+  border-radius: 4px; background: transparent; color: var(--text2);
+  cursor: pointer; font: inherit; font-size: .75rem;
+}
+.popup-close:hover { border-color: var(--red); color: var(--red); }
+
+.popup-root .agent-experiment,
+.popup-root .code-panel { padding: 0; border: 0; max-height: none; overflow: visible; }
+.popup-root .agent-advice,
+.popup-root .analysis { max-height: none; overflow: visible; }
+.popup-root .agent-candidate pre { max-height: 60vh; }
+.popup-root .code-snippet { max-height: 60vh; }
+.popup-root .analysis pre,
+.popup-root .agent-advice { font-size: .82rem; line-height: 1.6; }
+.popup-root .agent-note,
+.popup-root .agent-result,
+.popup-root .agent-status { font-size: .8rem; }
+.popup-root .agent-candidate { font-size: .78rem; }
+.popup-root .agent-candidate table { font-size: .76rem; }
+.popup-root .recommendation { font-size: .85rem; padding: .6rem .8rem; }
+
+.report-badges { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .9rem; }
+.badge {
+  padding: .25rem .55rem; border-radius: 4px; font-size: .72rem;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+
+.report-loading { display: flex; align-items: center; gap: .8rem; padding: 1rem 0; color: var(--text2); }
+.spinner {
+  width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%;
+  border: 3px solid var(--border); border-left-color: var(--cyan);
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.report-source { margin-top: 1rem; font-size: .78rem; color: var(--text2); }
+.report-source summary { cursor: pointer; padding: .3rem 0; }
