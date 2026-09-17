@@ -29,6 +29,7 @@ ASCII only, per the note at the top of prompts.py.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,31 @@ MIN_CONFIDENT_SAMPLES = 4
 # the worst frame, and a worst frame at twice the mean is already the difference
 # between a smooth run and a visible hitch.
 SPIKE_RATIO = 2.0
+
+# Above this many segments (= 5 toggles) analyze() collapses to one finding: at 6
+# toggles a 30 s window leaves 4-sample segments, too short to compare.
+MAX_SEGMENTS = 6
+
+# Simulated time, not wall clock: tick() gets dt * speed, so at 4x the pulse
+# lands every 0.5 s. Used only to word the aura finding; pulses are measured.
+AURA_INTERVAL_S = 2.0
+
+# Fewer than this many samples in the current segment and no trend is fitted.
+MIN_TREND_SAMPLES = 4
+
+# How far ahead risk_projection extrapolates, in seconds.
+PROJECTION_HORIZON_S = 10.0
+
+# The single source of these abbreviations: prompts.py renders its table column
+# from it, so a finding cannot name a mode the rows below it spell differently.
+COLLISION_TAGS = {
+    "BruteForce":  "BF",
+    "QuadTree":    "QT",
+    "UniformGrid": "UG",
+    "SpatialHash": "SH",
+}
+
+DISTRIBUTION_TAGS = {"Uniform": "U", "Clustered": "C"}
 
 
 @dataclass(frozen=True)
@@ -72,10 +98,29 @@ def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def _speed(r: dict[str, Any]) -> float:
+    """Simulation speed, defaulting to 1.0 -- records predating the axis were all
+    1x. float() because a marker writes it as a string, so 1 must not split from
+    1.0."""
+    try:
+        return float(r.get("speedMultiplier", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def mode_tag(collision: str, memory: str, distribution: str = "Uniform",
+             speed: float = 1.0) -> str:
+    """'QT/SoA/U', 'UG/AoS/C', 'BF/SoA/U@4x'. The speed suffix appears only when
+    it is not 1x, so the common case carries no extra column."""
+    c = COLLISION_TAGS.get(collision, "??")
+    d = DISTRIBUTION_TAGS.get(distribution, "U")
+    tag = f"{c}/{memory or '?'}/{d}"
+    return tag if speed == 1.0 else f"{tag}@{speed:g}x"
+
+
 def _tag(r: dict[str, Any]) -> str:
-    c = "QT" if r.get("collisionMode") == "QuadTree" else "BF"
-    d = "C" if r.get("distribution") == "Clustered" else "U"
-    return f"{c}/{r.get('memoryMode', '?')}/{d}"
+    return mode_tag(r.get("collisionMode", "?"), r.get("memoryMode", "?"),
+                    r.get("distribution", "Uniform"), _speed(r))
 
 
 def _pct(before: float, after: float) -> str:
@@ -97,7 +142,11 @@ def _pct(before: float, after: float) -> str:
 # ---------------------------------------------------------------------------
 
 def _key(r: dict[str, Any]) -> tuple:
-    return (r.get("collisionMode"), r.get("memoryMode"), r.get("distribution"))
+    """What counts as "the same configuration". speedMultiplier belongs here:
+    tick() gets dt * speed, so the same code on the same N genuinely costs
+    differently across it, and pooling 1x with 4x describes neither."""
+    return (r.get("collisionMode"), r.get("memoryMode"), r.get("distribution"),
+            _speed(r))
 
 
 def segments(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -205,16 +254,29 @@ def compare_markers(records: list[dict[str, Any]],
         a_d = {r.get("distribution") for r in after}
         if len(b_d | a_d) > 1 and "distribution" not in kinds:
             notes.append("spawn distribution also changed across this span")
+        b_s = {_speed(r) for r in before}
+        a_s = {_speed(r) for r in after}
+        if len(b_s | a_s) > 1 and "speedMultiplier" not in kinds:
+            notes.append(f"simulation speed moved ({sorted(b_s)} -> {sorted(a_s)}) "
+                         f"without a marker, so the two sides did not advance the "
+                         f"world at the same rate")
         if len(kinds) > 1:
             notes.append(f"{len(kinds)} axes changed at once ({', '.join(sorted(kinds))}), "
                          f"so the effect cannot be attributed to any one of them")
         if min(len(before), len(after)) < MIN_CONFIDENT_SAMPLES:
             notes.append(f"only {len(before)}/{len(after)} samples either side")
 
-        held = ""
+        # The treatment axis is excluded even with no notes -- the checks above skip
+        # a declared axis, so nothing there vouched for it.
+        holds: list[str] = []
         if not notes:
-            n = next(iter(b_n), "?")
-            held = f"N held at {n}, distribution held at {next(iter(b_d), '?')}; "
+            if "entityCount" not in kinds and len(b_n | a_n) == 1:
+                holds.append(f"N held at {next(iter(b_n))}")
+            if "distribution" not in kinds and len(b_d | a_d) == 1:
+                holds.append(f"distribution held at {next(iter(b_d))}")
+            if "speedMultiplier" not in kinds and len(b_s | a_s) == 1:
+                holds.append(f"speed held at {next(iter(b_s)):g}x")
+        held = ", ".join(holds) + "; " if holds else ""
 
         text = (f"{treatment}. "
                 f"{held}"
@@ -262,12 +324,17 @@ def spike_shape(records: list[dict[str, Any]]) -> list[Finding]:
 def aura_correlation(records: list[dict[str, Any]]) -> list[Finding]:
     """Does the worst frame of a second get worse when the aura fired in it?
 
-    The aura is the one cost in the tick with a known period (2.0 s), so it is
-    the one suspect that can be tested rather than argued about. Windows are 1 s,
-    so roughly half of them contain a pulse; if sim max is systematically higher
-    in the ones that do, the pulse is the stall. If it is not, the system prompt's
-    standing suspicion of the aura is wrong for this run and should be dropped --
-    which is worth saying, because an unfalsified suspect gets blamed.
+    The aura is the one cost in the tick with a known period, so it is the one
+    suspect that can be tested rather than argued about. Windows are 1 s and the
+    period is 2.0 s of simulated time, so at 1x roughly half of them contain a
+    pulse; if sim max is systematically higher in the ones that do, the pulse is
+    the stall. If it is not, the system prompt's standing suspicion of the aura
+    is wrong for this run and should be dropped -- which is worth saying, because
+    an unfalsified suspect gets blamed.
+
+    Splitting on the measured auraPulses count is what makes this survive the
+    speed axis: at 4x every window holds a pulse, so the guard below declines
+    rather than comparing one-pulse windows against two-pulse ones.
 
     Computed PER SEGMENT. Pooling the window would compare pulse-bearing seconds
     of one configuration against pulse-free seconds of another, so a toggle whose
@@ -293,11 +360,13 @@ def aura_correlation(records: list[dict[str, Any]]) -> list[Finding]:
                    if ratio >= 1.25 else
                    "the spikes are NOT explained by the aura pulse; look at the "
                    "per-tick tree rebuild or an allocation in the hot loop instead")
+        period = AURA_INTERVAL_S / _speed(seg[0])
         findings.append(Finding(
             f"Aura correlation, {_tag(seg[0])}",
             f"sim max averages {a:.2f} ms in the {len(with_p)} windows containing "
             f"an aura pulse vs {b:.2f} ms in the {len(without_p)} without "
-            f"({ratio:.2f}x). On this evidence {verdict}."))
+            f"({ratio:.2f}x); the pulse period is {period:.2f} s of wall time at "
+            f"this speed. On this evidence {verdict}."))
     return findings
 
 
@@ -347,19 +416,9 @@ def budget_pressure(records: list[dict[str, Any]]) -> list[Finding]:
         f"{over} of {frames} frames exceeded the budget ({over / frames * 100:.1f}%) "
         f"across {_n(len(records))}.")]
 
-import math
-
-MIN_TREND_SAMPLES = 4
-PROJECTION_HORIZON_S = 10.0
-
-
 def _normal_cdf(z: float) -> float:
-    """normal CDF, scipy 의존성 없이 math.erf로 계산."""
+    """Normal CDF via math.erf, so this module needs no scipy dependency."""
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-
-
-def _n_samples(n: int) -> str:
-    return f"{n} sample" + ("" if n == 1 else "s")
 
 
 def risk_projection(records: list[dict], markers: list[dict],
@@ -391,7 +450,7 @@ def risk_projection(records: list[dict], markers: list[dict],
     if not records:
         return []
 
-    seg = segments(records)[-1]  # 가장 최근 설정 구간만 사용
+    seg = segments(records)[-1]  # the most recent configuration only
     if len(seg) < MIN_TREND_SAMPLES:
         return [Finding(
             "Risk projection",
@@ -440,7 +499,7 @@ def risk_projection(records: list[dict], markers: list[dict],
 
     text = (
         f"{_tag(seg[0])} at N={seg[0].get('entities', 0)}, current segment "
-        f"({_n_samples(n)}): frame mean trend is {trend_word} "
+        f"({_n(n)}): frame mean trend is {trend_word} "
         f"({slope:+.3f} ms/s). Projected frame mean at t+{horizon_s:.0f}s: "
         f"{y_pred:.2f} ms (90% interval {ci_lo:.2f}-{ci_hi:.2f} ms) vs "
         f"budget {budget:.2f} ms -> estimated probability of exceeding "
@@ -459,9 +518,30 @@ def analyze(telemetry: dict[str, Any] | None) -> list[Finding]:
         return []
 
     findings: list[Finding] = []
+    segs = segments(records)
+
+    if len(segs) > MAX_SEGMENTS:
+        # Mirror image of the single-segment case below, and a collapse rather than a
+        # truncation: every finding dropped here would decline to conclude anyway.
+        lens = [len(x) for x in segs]
+        spread = (f"{_n(min(lens))} each" if min(lens) == max(lens) else
+                  f"{min(lens)}-{max(lens)} samples each, mean {_mean(lens):.1f}")
+        findings.append(Finding(
+            "Window too churned to compare",
+            f"{_n(len(records))} split across {len(segs)} configurations "
+            f"({spread}), so no "
+            f"span in this window is long enough to be an A/B and the per-segment "
+            f"statistics would be averages over three or four samples. Only the "
+            f"window-wide budget count below is reported. The table still carries "
+            f"every row: read it for the shape, cite it for nothing, and if a "
+            f"comparison is wanted, say that a steadier window is needed -- one "
+            f"configuration held for at least {MIN_CONFIDENT_SAMPLES} seconds "
+            f"either side of a single toggle."))
+        findings += budget_pressure(records)
+        return findings
+
     findings += compare_markers(records, markers)
 
-    segs = segments(records)
     if len(segs) == 1:
         # Said out loud. A single-configuration window is the common case when a
         # user hits Analyze without toggling anything, and the system prompt asks

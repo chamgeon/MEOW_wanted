@@ -16,6 +16,8 @@ the uvicorn log.
 
 from typing import Any
 
+from analyze import analyze, mode_tag, render
+
 SYSTEM_PROMPT = """\
 You are a senior C++ game engine programmer and systems performance architect.
 You specialize in Data-Oriented Design (DOD), CPU cache optimization, SIMD vectorization,
@@ -26,8 +28,16 @@ You will receive:
   time as a distribution (mean/p50/p95/p99/max), total JS frame time, entity
   count, and the collision + memory mode and spawn distribution that were
   active for that second
-- Markers recording exactly when a mode, the distribution, or the entity count
-  was toggled
+- Markers recording exactly when a mode, the distribution, the entity count or
+  the simulation speed was toggled
+- A findings block computed by the server from that same series, placed above
+  the table. Those numbers are arithmetic, not estimates: take them as given
+  rather than recomputing them, and do not contradict them from the rows. They
+  are deliberately measurements only - no finding tells you which mode to use,
+  and the caveats attached to one (an uncontrolled comparison, too few samples)
+  are limits on what it can support, so a diagnosis must not lean on a finding
+  harder than its caveat allows. If the block says no controlled comparison
+  exists in this window, there is none to cite.
 - The active C++ code path (collision + memory mode)
 - Modes: Collision [BruteForce | QuadTree | UniformGrid | SpatialHash], Memory [AoS | SoA]
 - Spawn distribution [Uniform | Clustered]. This is the scenario, not a tunable:
@@ -118,11 +128,12 @@ def _mode_tag(collision: str, memory: str, distribution: str = "Uniform") -> str
     Defaulted to Uniform so that records written before the distribution axis
     existed still render. They were all Uniform runs -- that was the only
     behaviour the engine had -- so the default is the true value, not a guess.
+
+    Delegates to analyze.mode_tag so the findings above cannot label a segment
+    differently from the rows here. Speed is not passed through: '@4x' would push
+    this column past the header width, so it goes in the note line instead.
     """
-    c = {"BruteForce": "BF", "QuadTree": "QT", "UniformGrid": "UG",
-         "SpatialHash": "SH"}.get(collision, "??")
-    d = "C" if distribution == "Clustered" else "U"
-    return f"{c}/{memory}/{d}"
+    return mode_tag(collision, memory, distribution)
 
 
 def _fmt_record(rec: dict[str, Any]) -> str:
@@ -155,7 +166,9 @@ def format_telemetry(telemetry: dict[str, Any] | None) -> str:
     if not telemetry:
         return ""
 
-    records = telemetry.get("records") or []
+    # Filtered, not trusted: the endpoint validates nothing inside telemetry, and
+    # the old truthiness check let a string through to _fmt_record row by row.
+    records = [r for r in (telemetry.get("records") or []) if isinstance(r, dict)]
     if not records:
         return ""
 
@@ -169,7 +182,19 @@ def format_telemetry(telemetry: dict[str, Any] | None) -> str:
     )
     lines.append("Columns are milliseconds unless noted. sim = C++ EngineCore::tick only;")
     lines.append("frm = tick + canvas draw; over = frames above the 60 FPS budget.")
-    lines.append("mode/dst is collision/memory/distribution: QT|BF, SoA|AoS, U=Uniform C=Clustered.")
+    lines.append("mode/dst is collision/memory/distribution: "
+                 "BF|QT|UG|SH, SoA|AoS, U=Uniform C=Clustered.")
+
+    # Not a column (it would not fit), but it cannot be omitted either: two rows
+    # with the same mode tag and a different speed are not the same experiment.
+    speeds = sorted({float(r.get("speedMultiplier", 1.0)) for r in records})
+    if speeds != [1.0]:
+        lines.append(
+            "Simulation speed in this window: "
+            + ", ".join(f"{v:g}x" for v in speeds)
+            + ". tick() is called with dt * speed, so cost is not comparable "
+              "across a speed change even at the same mode and N."
+        )
     lines.append("")
     lines.append(_HEADER)
     lines.append(_RULE)
@@ -215,6 +240,14 @@ def build_user_prompt(
 
     table = format_telemetry(telemetry)
     if table:
+        # Findings first, table still in full below so the model can check them.
+        # Wrapped: a schema change should cost the block, not the whole analysis.
+        try:
+            findings = render(analyze(telemetry))
+        except Exception:
+            findings = ""
+        if findings:
+            parts.append(findings)
         parts.append(table)
     else:
         # Said explicitly. Otherwise the model has no way to distinguish a run
