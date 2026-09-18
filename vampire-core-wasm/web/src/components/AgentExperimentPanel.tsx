@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CollisionMode, MemoryMode, SpawnDist } from '../App';
 import type { PerfLogger } from '../logging/PerfLogger';
+import { usePopupWindow, PopupWindowContent } from './PopupWindow';
 
 interface Timing { medianMs: number; p99Ms: number; samples: number }
 interface Benchmark {
@@ -58,6 +59,11 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
   const [submitting, setSubmitting] = useState(false);
   const [currentSourceHash, setCurrentSourceHash] = useState('');
 
+  // Six candidate combinations, each with a benchmark table and possibly a
+  // diff. That is a document, and the sidebar was clipping it to a 440 px
+  // scroll box -- so it gets its own window.
+  const popup = usePopupWindow('vc_optimize', 'AI Optimization Experiment - Vampire-Core Wasm');
+
   useEffect(() => {
     let disposed = false;
     void fetch('/api/agent-meta').then(response => response.json())
@@ -87,6 +93,10 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
   }, [jobId, job?.status]);
 
   const start = async () => {
+    // Opened before the first await, while this click still counts as user
+    // activation -- the experiment takes tens of seconds and the window would
+    // be blocked if it waited for the response.
+    popup.open();
     setSubmitting(true);
     setError('');
     try {
@@ -117,17 +127,92 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
   };
 
   const running = submitting || (!!jobId && (!job || !TERMINAL.has(job.status)));
+  const hasResult = running || !!job || !!error;
+
+  const report = (
+    <ExperimentReport
+      job={job} error={error} running={running} currentSourceHash={currentSourceHash}
+      collisionMode={collisionMode} memoryMode={memoryMode} distribution={distribution}
+      speedMultiplier={speedMultiplier} onApplyRecommendation={onApplyRecommendation}
+    />
+  );
+
   return (
     <section className="agent-experiment" aria-label="Verified optimization agent">
       <div className="agent-head">
         <h3>AI Optimization Experiment</h3>
-        <button type="button" onClick={() => void start()} disabled={running}>
-          {running ? '실험 중…' : 'Optimize'}
-        </button>
+        <div className="panel-actions">
+          {/* Re-open, not re-run: closing the window must not cost another
+              multi-minute experiment. */}
+          {hasResult && !popup.isOpen && !popup.blocked && (
+            <button type="button" className="ghost-btn" onClick={() => popup.open()}>결과 창 열기</button>
+          )}
+          {popup.isOpen && (
+            <button type="button" className="ghost-btn" onClick={popup.close}>결과 창 닫기</button>
+          )}
+          <button type="button" onClick={() => void start()} disabled={running}>
+            {running ? '실험 중…' : 'Optimize'}
+          </button>
+        </div>
       </div>
       <p className="agent-note">현재 {collisionMode}/{memoryMode} · {distribution} · {speedMultiplier}×를 기준으로 다른 3개 알고리즘 × AoS/SoA, 총 6개 조합을 비교합니다.</p>
-      {error && <p className="agent-error" role="alert">{error}</p>}
+      {/* The sidebar keeps only the line you want while the game is still
+          running: which job, and whether it is still working. */}
       {job && <div role="status" className="agent-status">작업 {job.jobId.slice(0, 8)} · {job.status}</div>}
+      {popup.blocked
+        ? <>
+            <p className="agent-error" role="alert">
+              팝업이 차단되어 결과를 이 패널에 표시합니다. 브라우저에서 이 사이트의 팝업을 허용하면 새 창으로 열립니다.
+            </p>
+            {hasResult && report}
+          </>
+        : hasResult && (
+            <p className="agent-note">
+              {popup.isOpen ? '실험 결과는 새 창에 표시됩니다.' : '결과 창이 닫혔습니다. "결과 창 열기"로 다시 볼 수 있습니다.'}
+            </p>
+          )}
+      <PopupWindowContent
+        handle={popup}
+        heading="AI Optimization Experiment - 검증된 후보 비교"
+        subheading={`기준 ${collisionMode}/${memoryMode} · ${distribution} · ${speedMultiplier}×`}
+      >
+        {report}
+      </PopupWindowContent>
+    </section>
+  );
+}
+
+/** The full experiment report: advice, observations, per-candidate benchmarks
+ *  and diffs. Lives in the popup; rendered inline only as a popup-blocked
+ *  fallback. */
+function ExperimentReport({ job, error, running, currentSourceHash, collisionMode, memoryMode,
+  distribution, speedMultiplier, onApplyRecommendation }: {
+  job:               Job | null;
+  error:             string;
+  running:           boolean;
+  currentSourceHash: string;
+  collisionMode:     CollisionMode;
+  memoryMode:        MemoryMode;
+  distribution:      SpawnDist;
+  speedMultiplier:   number;
+  onApplyRecommendation: (collision: CollisionMode, memory: MemoryMode) => void;
+}) {
+  return (
+    <div className="experiment-report">
+      <div className="report-badges">
+        <span className="badge">기준 {collisionMode} / {memoryMode}</span>
+        <span className="badge">{distribution}</span>
+        <span className="badge">{speedMultiplier}×</span>
+        {job && <span className="badge">job {job.jobId.slice(0, 8)}</span>}
+        {job && <span className="badge">{job.status}</span>}
+      </div>
+      {error && <p className="agent-error" role="alert">{error}</p>}
+      {running && (
+        <div className="report-loading" role="status">
+          <span className="spinner" aria-hidden="true" />
+          <p>후보 6개 조합을 빌드하고 동일 조건에서 벤치마크하는 중입니다…</p>
+        </div>
+      )}
       {job?.aiAdvice && <p className="agent-advice">{job.aiAdvice}</p>}
       {job?.advisorMode && <p className="agent-note">Advisor: {job.advisorMode}</p>}
       {job?.observations && <p className="agent-note">
@@ -180,17 +265,21 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
             job.status === 'no_improvement' ? '검증된 개선 후보가 없어 원본을 유지합니다.' : job.reason}
         </p>
       )}
+      {/* Lives in the popup but drives the game in the opener window: the
+          handler belongs to the parent React tree, so the portal costs nothing
+          extra here. */}
       {job?.winner && job.winnerMemory && job.status === 'ready' &&
         job.sourceHash === currentSourceHash &&
         job.candidates.some(candidate => candidate.algorithm === job.winner &&
           candidate.memoryMode === job.winnerMemory && candidate.sourceKind === 'existing') &&
-        <button type="button" onClick={() => onApplyRecommendation(job.winner as CollisionMode, job.winnerMemory as MemoryMode)}>
+        <button type="button" className="apply-btn"
+          onClick={() => onApplyRecommendation(job.winner as CollisionMode, job.winnerMemory as MemoryMode)}>
           추천 설정으로 게임 전환
         </button>}
       {job?.winner && job.winnerMemory && <p className="agent-note">메모리 모드가 바뀌면 같은 시드로 게임 세계를 다시 시작합니다.</p>}
       {job?.fastestMeasured && !job.fastestMeasured.eligible &&
         <p className="agent-note">측정상 가장 빠른 {job.fastestMeasured.algorithm}/{job.fastestMeasured.memoryMode}는 검증 기준을 통과하지 못해 추천하지 않습니다.</p>}
       {job?.limitations && <p className="agent-note">{job.limitations}</p>}
-    </section>
+    </div>
   );
 }

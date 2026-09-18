@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { PerfSample, CollisionMode, MemoryMode, SpawnDist } from '../App';
 import type { PerfLogger } from '../logging/PerfLogger';
+import { usePopupWindow, PopupWindowContent } from './PopupWindow';
 
 interface Props {
   stats?:        PerfSample;
@@ -162,6 +163,11 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
   const [rec,      setRec]      = useState<Recommendation | null>(null);
   const [loading,  setLoading]  = useState(false);
 
+  // The report is read, not glanced at -- prose plus a verdict block does not
+  // fit the 480 px sidebar. It goes to its own window; the sidebar keeps the
+  // snippet and the trigger.
+  const popup = usePopupWindow('vc_ai_analyze', 'AI Analyze — Vampire-Core Wasm');
+
   const snippet = SNIPPETS[collisionMode][memoryMode];
 
   // The endpoint accepts a request with no telemetry (that was the original
@@ -171,6 +177,10 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
 
   const runAnalysis = async () => {
     if (!stats) return;
+    // Synchronously, inside the click: window.open() only works while the
+    // user activation from this event is still live, and the await below
+    // outlives it.
+    popup.open();
     setLoading(true);
     setAnalysis('');
     setRec(null);
@@ -205,6 +215,16 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
     && (!rec.collision || rec.collision === collisionMode)
     && (!rec.memory    || rec.memory    === memoryMode);
 
+  const hasResult = loading || !!analysis || !!rec;
+
+  const report = (
+    <AnalysisReport
+      loading={loading} analysis={analysis} rec={rec} agrees={agrees}
+      collisionMode={collisionMode} memoryMode={memoryMode} spawnDist={spawnDist}
+      stats={stats} snippet={snippet} recordCount={recordCount}
+    />
+  );
+
   return (
     <div className="code-panel">
       <div className="code-panel-header">
@@ -213,12 +233,78 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
             producing the numbers" -- and at fixed source, the world is half
             of that. */}
         <h3>Active Code Path &mdash; {collisionMode} / {memoryMode} <span className="code-panel-dist">on {spawnDist}</span></h3>
-        <button onClick={runAnalysis} disabled={loading || !stats}>
-          {loading ? 'Analyzing...' : `AI Analyze (${recordCount}s)`}
-        </button>
+        <div className="panel-actions">
+          {/* Re-open, not re-run: closing the window must not cost another
+              round trip to the model. */}
+          {hasResult && !popup.isOpen && !popup.blocked && (
+            <button type="button" className="ghost-btn" onClick={() => popup.open()}>결과 창 열기</button>
+          )}
+          {popup.isOpen && (
+            <button type="button" className="ghost-btn" onClick={popup.close}>결과 창 닫기</button>
+          )}
+          <button onClick={runAnalysis} disabled={loading || !stats}>
+            {loading ? 'Analyzing...' : `AI Analyze (${recordCount}s)`}
+          </button>
+        </div>
       </div>
       <pre className="code-snippet"><code>{snippet}</code></pre>
       <p className="agent-note">위 코드는 설명용 요약입니다. 게임은 빌드된 WASM의 실제 C++ 코드를 실행합니다.</p>
+      {popup.blocked
+        ? <>
+            <p className="agent-error" role="alert">
+              팝업이 차단되어 결과를 이 패널에 표시합니다. 브라우저에서 이 사이트의 팝업을 허용하면 새 창으로 열립니다.
+            </p>
+            {hasResult && report}
+          </>
+        : hasResult && (
+            <p className="agent-note">
+              {popup.isOpen ? '분석 결과는 새 창에 표시됩니다.' : '결과 창이 닫혔습니다. “결과 창 열기”로 다시 볼 수 있습니다.'}
+            </p>
+          )}
+      <PopupWindowContent
+        handle={popup}
+        heading="AI Analyze — 활성 코드 경로 진단"
+        subheading={`${collisionMode} / ${memoryMode} · ${spawnDist} · 최근 ${TELEMETRY_WINDOW_S}s 텔레메트리 ${recordCount}개 구간`}
+      >
+        {report}
+      </PopupWindowContent>
+    </div>
+  );
+}
+
+/** The report body. Rendered into the popup normally, and inline only when the
+ *  popup blocker refused the window -- so there is exactly one copy of it. */
+function AnalysisReport({ loading, analysis, rec, agrees, collisionMode, memoryMode, spawnDist,
+  stats, snippet, recordCount }: {
+  loading:       boolean;
+  analysis:      string;
+  rec:           Recommendation | null;
+  agrees:        boolean;
+  collisionMode: CollisionMode;
+  memoryMode:    MemoryMode;
+  spawnDist:     SpawnDist;
+  stats?:        PerfSample;
+  snippet:       string;
+  recordCount:   number;
+}) {
+  return (
+    <div className="analysis-report">
+      {stats && (
+        <div className="report-badges">
+          <span className="badge">Alive: {stats.entities.toLocaleString()}</span>
+          <span className="badge">FPS: {stats.fps.toFixed(1)}</span>
+          <span className="badge">Sim: {stats.simMs.toFixed(2)} ms</span>
+          <span className="badge">Frame: {stats.frameMs.toFixed(2)} ms</span>
+          <span className="badge">{collisionMode} / {memoryMode} · {spawnDist}</span>
+          <span className="badge">telemetry {recordCount}s</span>
+        </div>
+      )}
+      {loading && (
+        <div className="report-loading" role="status">
+          <span className="spinner" aria-hidden="true" />
+          <p>LLM 에이전트가 런타임 병목과 C++ 코드를 분석 중입니다…</p>
+        </div>
+      )}
       {rec && (
         <div className={`recommendation ${agrees ? 'rec-agree' : 'rec-differ'}`}>
           <strong>
@@ -236,6 +322,12 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
           <h4>AI Analysis</h4>
           <pre>{analysis}</pre>
         </div>
+      )}
+      {(analysis || rec) && (
+        <details className="report-source">
+          <summary>분석에 함께 보낸 코드 요약</summary>
+          <pre className="code-snippet"><code>{snippet}</code></pre>
+        </details>
       )}
     </div>
   );
