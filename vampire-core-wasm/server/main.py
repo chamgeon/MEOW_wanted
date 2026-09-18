@@ -5,7 +5,6 @@ import json
 import uuid
 from typing import Any
 
-import anthropic
 import openai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -21,30 +20,14 @@ from agent_pipeline import (GENERATED, MAX_BRUTE_FORCE_ENEMIES, diagnostic_sourc
 
 load_dotenv()
 
-# Override with MODEL=... in .env if you want a different tier.
-# claude-opus-5 gives deeper analysis; claude-haiku-4-5-20251001 is fastest.
-MODEL = os.environ.get("MODEL", "claude-sonnet-5")
+# Override with MODEL=... in .env if you want a different OpenAI tier.
+# This is deliberately separate from AGENT_MODEL, which ranks verified
+# optimization candidates in the background workflow.
+MODEL = os.environ.get("MODEL", "gpt-4.1-mini")
 
-# Raised from 1600, which was sized against the visible reply alone and was far
-# too small. On Sonnet 5 thinking is ON by default -- omitting the `thinking`
-# parameter runs adaptive -- and thinking tokens are billed against max_tokens
-# even though we never show them. A measured run spent ~1000 tokens thinking and
-# ~650 on the JSON, so a 1600 cap cut the reply mid-snippet: the user saw raw,
-# unparseable JSON because json.loads failed and parse_reply fell back to
-# passing the text through. The SDK guidance for non-streaming requests is
-# ~16000, which stays inside the HTTP timeout.
+# This caps the report returned by the OpenAI Responses API. A malformed or
+# truncated response still degrades to readable text in parse_reply below.
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "5000"))
-
-# Adaptive is the only on-mode on Sonnet 5 and is what omitting the parameter
-# already does; naming it makes the thinking cost above deliberate rather than
-# inherited. budget_tokens is not an option here -- it is removed on this model
-# and returns a 400.
-THINKING = {"type": "adaptive"}
-
-# The demo blocks on this call behind a spinner, so depth is traded for latency.
-# 'medium' is the cost-saving step down from the default 'high'; raise it if the
-# diagnoses start reading shallow.
-EFFORT = os.environ.get("EFFORT", "medium")
 
 app = FastAPI(title="Vampire-Core AI Profiler", version="0.2.0")
 optimization_jobs: dict[str, dict] = {}
@@ -57,21 +40,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# AsyncAnthropic, not Anthropic: the sync client blocks the event loop for the
-# whole model call, which would stall every other request on this worker.
-_client: anthropic.AsyncAnthropic | None = None
+# A shared async client avoids blocking the event loop while a report is made.
+_client: openai.AsyncOpenAI | None = None
 
 
-def get_client() -> anthropic.AsyncAnthropic:
+def get_client() -> openai.AsyncOpenAI:
     global _client
     if _client is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise HTTPException(
                 status_code=500,
-                detail="ANTHROPIC_API_KEY not set. Put it in server/.env or export it.",
+                detail="OPENAI_API_KEY not set. Put it in .env or export it.",
             )
-        _client = anthropic.AsyncAnthropic(api_key=api_key)
+        _client = openai.AsyncOpenAI(api_key=api_key, timeout=35)
     return _client
 
 
@@ -253,30 +235,23 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
     client = get_client()
     samples = len((req.telemetry or {}).get("records") or [])
     try:
-        message = await client.messages.create(
+        message = await client.responses.create(
             model=MODEL,
-            max_tokens=MAX_TOKENS,
-            thinking=THINKING,
-            output_config={"effort": EFFORT},
-            system=SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": build_user_prompt(
-                        req.fps,
-                        req.frameTimeMs,
-                        req.entityCount,
-                        req.collisionMode,
-                        req.memoryMode,
-                        req.codeSnippet,
-                        telemetry=req.telemetry,
-                        aura_snippet=req.auraSnippet,
-                        spawn_distribution=req.spawnDistribution or "Uniform",
-                    ),
-                }
-            ],
+            max_output_tokens=MAX_TOKENS,
+            instructions=SYSTEM_PROMPT,
+            input=build_user_prompt(
+                req.fps,
+                req.frameTimeMs,
+                req.entityCount,
+                req.collisionMode,
+                req.memoryMode,
+                req.codeSnippet,
+                telemetry=req.telemetry,
+                aura_snippet=req.auraSnippet,
+                spawn_distribution=req.spawnDistribution or "Uniform",
+            ),
         )
-        text = "".join(block.text for block in message.content if block.type == "text")
+        text = message.output_text
         analysis, recommendation = parse_reply(text)
         return OptimizeResponse(
             analysis=analysis,
@@ -284,15 +259,15 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
             recommendation=recommendation,
             telemetrySamples=samples,
         )
-    except anthropic.APIStatusError as e:
+    except openai.APIStatusError as e:
         raise HTTPException(status_code=502, detail=f"{e.status_code}: {e.message}")
-    except anthropic.APIError as e:
+    except openai.APIError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "model": MODEL, "key_configured": bool(os.environ.get("ANTHROPIC_API_KEY"))}
+    return {"status": "ok", "model": MODEL, "key_configured": bool(os.environ.get("OPENAI_API_KEY"))}
 
 
 # New verified optimization workflow. The older /api/optimize endpoint remains

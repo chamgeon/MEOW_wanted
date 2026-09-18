@@ -29,16 +29,17 @@ class OpenAIEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["findings"][0]["label"], "Budget")
         self.assertEqual(sent["observations"], {"simMedianMs": 4})
 
-    async def test_legacy_analysis_still_uses_its_existing_contract(self):
-        create = AsyncMock(return_value=SimpleNamespace(
-            content=[SimpleNamespace(type="text", text="diagnosis")]))
-        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    async def test_analysis_uses_openai_responses_contract(self):
+        create = AsyncMock(return_value=SimpleNamespace(output_text="diagnosis"))
+        client = SimpleNamespace(responses=SimpleNamespace(create=create))
         request = main.OptimizeRequest(
             fps=42.0, frameTimeMs=22.0, entityCount=5000,
             collisionMode="BruteForce", memoryMode="SoA", codeSnippet="test loop")
         with patch.object(main, "get_client", return_value=client):
             result = await main.optimize(request)
         self.assertEqual(result.analysis, "diagnosis")
+        self.assertEqual(create.await_args.kwargs["model"], main.MODEL)
+        self.assertIn("test loop", create.await_args.kwargs["input"])
 
 
 if __name__ == "__main__":
