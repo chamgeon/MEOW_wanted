@@ -25,11 +25,26 @@ load_dotenv()
 # claude-opus-5 gives deeper analysis; claude-haiku-4-5-20251001 is fastest.
 MODEL = os.environ.get("MODEL", "claude-sonnet-5")
 
-# Raised from 1024: the response now carries a diagnosis, a code block, an
-# impact estimate AND the machine-parsed configuration block. At 1024 the
-# configuration block was the part that got truncated, which is precisely the
-# part a caller cannot recover by re-reading prose.
-MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1600"))
+# Raised from 1600, which was sized against the visible reply alone and was far
+# too small. On Sonnet 5 thinking is ON by default -- omitting the `thinking`
+# parameter runs adaptive -- and thinking tokens are billed against max_tokens
+# even though we never show them. A measured run spent ~1000 tokens thinking and
+# ~650 on the JSON, so a 1600 cap cut the reply mid-snippet: the user saw raw,
+# unparseable JSON because json.loads failed and parse_reply fell back to
+# passing the text through. The SDK guidance for non-streaming requests is
+# ~16000, which stays inside the HTTP timeout.
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "5000"))
+
+# Adaptive is the only on-mode on Sonnet 5 and is what omitting the parameter
+# already does; naming it makes the thinking cost above deliberate rather than
+# inherited. budget_tokens is not an option here -- it is removed on this model
+# and returns a 400.
+THINKING = {"type": "adaptive"}
+
+# The demo blocks on this call behind a spinner, so depth is traded for latency.
+# 'medium' is the cost-saving step down from the default 'high'; raise it if the
+# diagnoses start reading shallow.
+EFFORT = os.environ.get("EFFORT", "medium")
 
 app = FastAPI(title="Vampire-Core AI Profiler", version="0.2.0")
 optimization_jobs: dict[str, dict] = {}
@@ -157,6 +172,82 @@ def parse_recommendation(text: str) -> Recommendation | None:
     return rec
 
 
+# Section headings for the woven markdown. Korean, because they sit directly
+# above Korean prose in the report window.
+#
+# prompts.py is held to pure ASCII because a stray character there can reach the
+# cp949 console through a log line. These do not: they are concatenated into the
+# response body and serialized to UTF-8 JSON, and nothing prints them.
+_SECTIONS = (
+    ("diagnosis",      "## \ubcd1\ubaa9 \uc9c4\ub2e8",              ""),
+    ("snippet",        "## \ucd5c\uc801\ud654\ub41c C++ \uc2a4\ub2c8\ud3ab", "cpp"),
+    ("expectedImpact", "## \uc608\uc0c1 \ud6a8\uacfc",              ""),
+)
+
+
+def _weave_markdown(data: dict[str, Any]) -> str:
+    """Render the model's JSON object as the markdown string the client shows.
+
+    Done here rather than in the browser so that OptimizeResponse.analysis keeps
+    meaning exactly what it meant under the old contract -- one string of
+    markdown, ready to display. The frontend needs no change, and a client built
+    against v0.1.0 keeps working.
+
+    A section whose field is missing or blank is omitted rather than rendered as
+    an empty heading: a heading over nothing reads as "analysed, found nothing",
+    which is a different claim from "the model did not return this field".
+    """
+    parts = []
+    for key, heading, fence in _SECTIONS:
+        body = str(data.get(key) or "").strip()
+        if not body:
+            continue
+        parts.append(f"{heading}\n```{fence}\n{body}\n```" if fence else f"{heading}\n{body}")
+    return "\n\n".join(parts)
+
+
+def _recommendation_from(obj: Any) -> Recommendation | None:
+    """Validate the JSON recommendation against the enums embind accepts.
+
+    Same contract as parse_recommendation: an unrecognised value becomes None
+    rather than travelling on to the wasm call, and an object with neither mode
+    is no recommendation at all.
+    """
+    if not isinstance(obj, dict):
+        return None
+    confidence = str(obj.get("confidence", "")).lower()
+    rec = Recommendation(
+        collision=_VALID_COLLISION.get(str(obj.get("collision", "")).lower()),
+        memory=_VALID_MEMORY.get(str(obj.get("memory", "")).lower()),
+        confidence=confidence if confidence in _VALID_CONFIDENCE else None,
+        # Dropped from the prompt, but still read if a model emits it, so that
+        # re-adding the field to the schema needs no change here.
+        reason=str(obj.get("reason", ""))[:200] or None,
+    )
+    return rec if (rec.collision or rec.memory) else None
+
+
+def parse_reply(text: str) -> tuple[str, Recommendation | None]:
+    """Split the model's reply into display markdown and the parsed verdict.
+
+    Degrades instead of failing. A reply that is not valid JSON -- a stray
+    preamble, or a response truncated by MAX_TOKENS mid-snippet -- is passed
+    through verbatim and handed to the old markdown parser for the verdict. The
+    user then sees a malformed answer, which is recoverable; raising here would
+    show them an empty report window, which is not.
+    """
+    raw = text.strip()
+    if raw.startswith("```"):                      # fenced despite the instruction
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return text, parse_recommendation(text)
+    if not isinstance(data, dict):
+        return text, parse_recommendation(text)
+    return _weave_markdown(data) or text, _recommendation_from(data.get("recommendation"))
+
+
 @app.post("/api/optimize", response_model=OptimizeResponse)
 async def optimize(req: OptimizeRequest) -> OptimizeResponse:
     client = get_client()
@@ -165,6 +256,8 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
         message = await client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
+            thinking=THINKING,
+            output_config={"effort": EFFORT},
             system=SYSTEM_PROMPT,
             messages=[
                 {
@@ -184,10 +277,11 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
             ],
         )
         text = "".join(block.text for block in message.content if block.type == "text")
+        analysis, recommendation = parse_reply(text)
         return OptimizeResponse(
-            analysis=text,
+            analysis=analysis,
             model=MODEL,
-            recommendation=parse_recommendation(text),
+            recommendation=recommendation,
             telemetrySamples=samples,
         )
     except anthropic.APIStatusError as e:
