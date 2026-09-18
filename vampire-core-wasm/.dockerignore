@@ -1,0 +1,9 @@
+.git
+server/.venv
+**/__pycache__
+**/*.pyc
+server/.env
+server/generated
+web
+core/build
+core/build-native
