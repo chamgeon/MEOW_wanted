@@ -1,4 +1,8 @@
-# Vampire-Core Wasm
+# Vampire-Core Wasm (Team MEOW)
+
+> **Live backend**: https://meow-ai.p-e.kr/
+> 상태 확인: [`/health`](https://meow-ai.p-e.kr/health) · [`/api/agent-meta`](https://meow-ai.p-e.kr/api/agent-meta)
+
 
 C++ 시뮬레이션 코어를 WebAssembly로 컴파일해 브라우저에서 **엔티티 1만 개를 60 FPS로** 돌리는 성능 테크 데모입니다. 화면 위에서 두 가지 최적화 축을 실시간으로 켜고 끄면서 프레임 타임이 어떻게 변하는지 직접 볼 수 있습니다.
 
@@ -204,3 +208,6 @@ uvicorn main:app --reload --port 8000
 ```
 
 Vite 개발 서버가 `/api`를 `localhost:8000`으로 프록시합니다. `.env`는 gitignore돼 있습니다 — **API 키를 절대 커밋하지 마세요.**
+
+
+> 로컬 세팅이 번거로우면 배포된 인스턴스(`https://meow-ai.p-e.kr/`)를 바로 써도 됩니다. 상태 확인: [`/health`](https://meow-ai.p-e.kr/health) · [`/api/agent-meta`](https://meow-ai.p-e.kr/api/agent-meta)
