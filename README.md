@@ -81,7 +81,7 @@ npm install          # 최초 1회
 npm run dev
 ```
 
-브라우저에서 <http://localhost:5173> 을 엽니다.
+> AI Analyze/Optimize 버튼을 로컬에서 쓰려면 새 터미널을 하나 더 열어서 아래 "AI 프로파일러 백엔드" 섹션대로 서버(`uvicorn`)도 같이 실행해야 합니다. 서버 없이도 게임 시뮬레이션 자체는 정상 작동합니다.
 
 ---
 
