@@ -1,102 +1,121 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:      #0a0a0f;
-  --surface: #12121a;
-  --border:  #2a2a3a;
-  --accent:  #7c5cbf;
-  --green:   #4caf50;
-  --orange:  #f5a623;
-  --red:     #e05050;
-  --cyan:    #6fd3e0;
-  --text:    #ddd;
-  --text2:   #888;
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  /* The page is near-black with a blue cast; panels sit one step above it and
+     are separated by a border rather than by a strong fill, so the canvas and
+     the charts stay the brightest things on screen. */
+  --bg:        #06080c;
+  --surface:   #0d1117;
+  --surface-2: #11161e;
+  --border:    #1e2732;
+  --border-2:  #2a3442;
+
+  /* Blue is "this control selects a configuration". Green is "measured and
+     good", orange "measured and costly", red "measured and bad" -- so the
+     accent never competes with the readouts for meaning. */
+  --accent:      #2f6feb;
+  --accent-soft: #58a6ff;
+  --green:       #3fb950;
+  --teal:        #2ee6a8;
+  --orange:      #f5a623;
+  --red:         #e05050;
+  --cyan:        #6fd3e0;
+
+  --text:  #e6edf3;
+  --text2: #8b949e;
+
+  --radius:    8px;
+  --radius-sm: 6px;
+
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
+  color-scheme: dark;
 }
 
-.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body { background: var(--bg); }
 
-/* Header */
-.app-header {
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: .6rem 1rem; background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-.app-header h1 { font-size: 1.1rem; white-space: nowrap; }
-.app-header h1 .subtitle { color: var(--text2); font-weight: 400; font-size: .85rem; margin-left: .4rem; }
+.app { height: 100vh; overflow: hidden; }
 
-.controls { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.ctrl-label { display: flex; align-items: center; gap: .4rem; color: var(--text2); }
-.ctrl-label input[type=range] { width: 120px; accent-color: var(--accent); }
-.ctrl-val { min-width: 3.5rem; color: var(--text); }
-.mode-select {
-  padding: .3rem .5rem; border: 1px solid var(--accent); border-radius: 4px;
-  background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
-}
-.mode-select:disabled { opacity: .4; cursor: not-allowed; }
-
-.toggle-btn {
-  padding: .3rem .7rem; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg); color: var(--text2); cursor: pointer; transition: all .15s;
-}
-.toggle-btn.on { border-color: var(--accent); color: var(--text); background: #1e1530; }
-.toggle-btn strong { color: var(--accent); }
-.toggle-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-/* The scenario toggle. Cyan, and with no ".on" state, because neither
-   distribution is the preferred one: the two mode toggles light up purple to
-   mean "the fast path is selected", and reusing that here would claim Clustered
-   is an optimization when it is simply a harder workload. Cyan says "different
-   axis". */
-.dist-btn { border-color: #2a4a52; }
-.dist-btn strong { color: var(--cyan); }
-.dist-btn.clustered { border-color: var(--cyan); color: var(--text); background: #0c2126; }
-
-/* Pause gets orange rather than the accent purple the mode toggles use. Those
-   two select a configuration; this one suspends it, and colouring it the same
-   would read as a third algorithm switch. */
-.pause-btn { display: flex; align-items: center; gap: .4rem; }
-.pause-btn.paused { border-color: var(--orange); color: var(--orange); background: #241a06; }
-.pause-btn kbd { font-size: .62rem; opacity: .65; }
-
-.hud { display: flex; gap: 1rem; font-size: .85rem; margin-left: auto; }
-.hud span { padding: .2rem .5rem; background: var(--bg); border-radius: 4px; }
-.hud-good { color: var(--green); }
-.hud-bad  { color: var(--red); }
-.hud-warn { color: var(--orange); font-size: .8rem; }
-.hud-warn code { background: #2a1a00; padding: .1rem .3rem; border-radius: 3px; }
-/* Kills is the only HUD field the player drives directly, so it reads in the
-   aura's colour rather than the neutral text colour. */
-.hud-kills { color: #9dbcff; }
-.hud-paused {
-  color: var(--orange); font-weight: 600; letter-spacing: .08em; font-size: .75rem;
-  background: #241a06 !important; border: 1px solid #4a3a1a;
+/* Two columns: what is being measured on the left, what describes or changes
+   it on the right. Both scroll independently so a long AI report never pushes
+   the simulation off screen. */
+.app-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(380px, 37vw, 620px);
+  gap: .75rem;
+  height: 100%;
+  padding: .75rem;
 }
 
-/* Body */
-.app-body { display: flex; flex: 1; overflow: hidden; }
+.stage-col {
+  display: flex; flex-direction: column; gap: .75rem;
+  min-width: 0; min-height: 0;
+}
+.side-col {
+  display: flex; flex-direction: column; gap: .6rem;
+  min-width: 0; min-height: 0; overflow-y: auto;
+  padding-right: .15rem;
+}
 
-/* Stage: canvas + the control hint that explains what the aura ring is.
+/* ---- Shared panel chrome ---------------------------------------------- */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .75rem .85rem;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: .6rem; margin-bottom: .5rem;
+}
+.panel-title {
+  font-size: .75rem; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+/* Not uppercase like the rest of the heading: the distribution is context for
+   the code path, not part of its name. */
+.panel-title-dist { color: var(--accent-soft); text-transform: none; letter-spacing: 0; }
+.panel-actions { display: flex; align-items: center; gap: .35rem; flex-shrink: 0; }
+
+.btn {
+  padding: .3rem .7rem; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-2); background: transparent;
+  color: var(--text2); font: inherit; font-size: .78rem;
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-accent { border-color: var(--accent); color: var(--accent-soft); }
+.btn-accent:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn-ghost:hover:not(:disabled) { border-color: var(--accent-soft); color: var(--accent-soft); }
+
+/* ---- Stage: canvas + the hint that explains what the aura ring is ------
    Without the hint the pulsing circle reads as a rendering artefact. */
+/* The stage and the charts split whatever height the logger leaves. The total
+   is held at 2.25 so the column still fills exactly; moving the split moves
+   height from one to the other. 1.25 : 1 -> 1.5 : 0.75 -> 1.65 : 0.6 is the
+   stage at +20% then a further +10%, paid for out of the charts -- the field is
+   the thing being demonstrated, and two traces stay readable in a short box. */
 .stage {
-  display: flex; flex-direction: column; flex-shrink: 0;
-  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  flex: 1.65 1 0; min-height: 0;
+  padding: 0; overflow: hidden;
 }
 /* position:relative only so the pause overlay has something to anchor to.
    line-height:0 keeps the inline canvas from adding a descender gap that would
-   leave a 4 px stripe of background below the overlay. */
-.stage-canvas { position: relative; flex-shrink: 0; line-height: 0; }
-.game-canvas { display: block; background: #0a0a0f; flex-shrink: 0; }
+   leave a stripe of background below the overlay. */
+.stage-canvas { position: relative; flex: 1; min-height: 0; line-height: 0; }
+.game-canvas-box { width: 100%; height: 100%; }
+.game-canvas { display: block; width: 100%; height: 100%; background: var(--bg); }
 
 /* Dim rather than hide: the frozen field is the thing worth looking at while
    paused, so the scrim only has to make the label legible over it. */
 .stage-paused {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
-  background: rgba(10, 10, 15, .45);
+  background: rgba(6, 8, 12, .45);
   line-height: 1.4; pointer-events: none;
 }
 .stage-paused-tag {
@@ -108,182 +127,335 @@
   text-shadow: 0 1px 6px rgba(0, 0, 0, .9);
 }
 .stage-help {
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: .45rem .7rem; font-size: .75rem; color: var(--text2);
-  background: var(--surface); border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; flex-shrink: 0;
+  padding: .45rem .7rem; font-size: .72rem; color: var(--text2);
+  background: var(--surface-2); border-top: 1px solid var(--border);
 }
 .stage-help span { display: flex; align-items: center; gap: .25rem; }
-.stage-help-aura { color: #7f9fd0; }
+.stage-help-aura { color: var(--accent-soft); }
 kbd {
   display: inline-block; min-width: 1.4rem; text-align: center;
   padding: .1rem .3rem; font-family: 'Cascadia Code', 'Consolas', monospace;
-  font-size: .7rem; color: var(--text);
-  background: var(--bg); border: 1px solid var(--border);
-  border-bottom-width: 2px; border-radius: 3px;
+  font-size: .68rem; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border-2);
+  border-bottom-width: 2px; border-radius: 4px;
 }
 
-/* Sidebar */
-.sidebar {
-  flex: 1; display: flex; flex-direction: column;
-  overflow: hidden; min-width: 320px; max-width: 480px;
+/* ---- Charts ------------------------------------------------------------ */
+.metric-graph {
+  flex: .6 1 0; min-height: 0;
+  display: flex; flex-direction: column; gap: .5rem;
 }
+.chart-block { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chart-block .panel-title { margin-bottom: .2rem; }
+/* ResponsiveContainer measures its parent, so the parent needs a height that
+   does not come from its own children. */
+.chart-box { flex: 1; min-height: 60px; }
 
-/* MetricGraph */
-.metric-graph { padding: .6rem; border-bottom: 1px solid var(--border); }
-.metric-graph h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: .3rem; }
-
-/* Telemetry readout -- what the 1 Hz logger last wrote. */
-.telemetry { padding: .6rem; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.telemetry-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .4rem; }
-.telemetry-head h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
-.telemetry-head button {
-  padding: .2rem .55rem; border: 1px solid var(--border); border-radius: 4px;
-  background: transparent; color: var(--text2); cursor: pointer; font-size: .7rem; transition: all .15s;
+/* ---- Telemetry readout -- what the 1 Hz logger last wrote -------------- */
+.telemetry { flex-shrink: 0; }
+/* Two label/value pairs per row at the width this column now has: the design
+   reads it as a small table, not a long list. */
+.telemetry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .25rem 2rem; }
+.telemetry-grid dl {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: .25rem 1rem; font-size: .74rem; align-items: baseline;
 }
-.telemetry-head button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.telemetry-head button:disabled { opacity: .4; cursor: not-allowed; }
-
-/* Two columns: label, value. A monospace value column keeps the digits from
-   dancing as the numbers change once a second. */
-.telemetry-grid {
-  display: grid; grid-template-columns: auto 1fr; gap: .15rem .6rem;
-  font-size: .72rem; align-items: baseline;
-}
-.telemetry-grid span { color: var(--text2); }
-.telemetry-grid b {
-  font-weight: 500; color: var(--text);
+.telemetry-grid dt { color: var(--text2); }
+.telemetry-grid dd {
+  font-weight: 600; color: var(--text);
   font-family: 'Cascadia Code', 'Consolas', monospace;
   font-variant-numeric: tabular-nums;
 }
-.telemetry-grid b.hud-good { color: var(--green); }
-.telemetry-grid b.hud-bad  { color: var(--red); }
-.telemetry-empty { font-size: .72rem; color: var(--text2); font-style: italic; }
+.telemetry-grid dd.hud-good { color: var(--green); }
+.telemetry-grid dd.hud-bad  { color: var(--red); }
+.telemetry-empty { font-size: .74rem; color: var(--text2); font-style: italic; }
 
-/* CodePanel */
-.code-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: .6rem; gap: .5rem; }
-.code-panel-header { display: flex; align-items: center; justify-content: space-between; }
-.code-panel-header h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; }
-/* Not uppercase like the rest of the heading: the distribution is context for
-   the code path, not part of its name. */
-.code-panel-header h3 .code-panel-dist { color: var(--cyan); text-transform: none; letter-spacing: 0; }
-.code-panel-header button {
-  padding: .25rem .7rem; border: 1px solid var(--accent); border-radius: 4px;
-  background: transparent; color: var(--accent); cursor: pointer; font-size: .8rem; transition: all .15s;
+/* ---- HUD strip: the live numbers, at the top of the control column ----- */
+/* Sticky because the column scrolls: a long AI report would otherwise push
+   the live numbers off screen, and they are the one thing on this side that
+   has to stay readable while the simulation runs. */
+.hud {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem 1.1rem;
+  font-size: .82rem; font-weight: 600; padding: .35rem .25rem;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg);
 }
-.code-panel-header button:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.code-panel-header button:disabled { opacity: .4; cursor: not-allowed; }
+.hud-good { color: var(--green); }
+.hud-bad  { color: var(--red); }
+/* Kills is the only HUD field the player drives directly, so it reads in the
+   aura's colour rather than the neutral text colour. */
+.hud-kills { color: var(--accent-soft); }
+.hud-paused {
+  color: var(--orange); letter-spacing: .08em; font-size: .75rem;
+  padding: .1rem .4rem; background: #241a06; border: 1px solid #4a3a1a; border-radius: 4px;
+}
+.hud-warn {
+  color: var(--orange); font-size: .76rem; line-height: 1.5;
+  padding: .45rem .6rem; background: #1a1305; border: 1px solid #4a3a1a;
+  border-radius: var(--radius-sm);
+}
+.hud-warn code { background: #2a1a00; padding: .1rem .3rem; border-radius: 3px; }
 
-.code-snippet {
-  flex: 1; overflow: auto; background: #0d0d14; border: 1px solid var(--border);
-  border-radius: 4px; padding: .6rem; font-size: .75rem; line-height: 1.5;
-  color: #b0c4de; font-family: 'Cascadia Code', 'Consolas', monospace;
+/* ---- Title + controls -------------------------------------------------- */
+.title-card {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+}
+.title-card h1 { font-size: 1.05rem; white-space: nowrap; }
+.title-card h1 .subtitle {
+  color: var(--text2); font-weight: 400; font-size: .78rem; margin-left: .45rem;
+}
+
+.control-card {
+  display: flex; align-items: center; gap: .6rem 1rem; flex-wrap: wrap;
+}
+
+.ctrl-label { display: flex; align-items: center; gap: .45rem; color: var(--text2); font-size: .82rem; }
+.ctrl-label input[type=range] {
+  width: 130px; accent-color: var(--accent); cursor: pointer;
+}
+.ctrl-val { min-width: 3.5rem; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.mode-select {
+  padding: .32rem .5rem; border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text); font: inherit; font-size: .82rem; cursor: pointer;
+}
+.mode-select:disabled { opacity: .45; cursor: not-allowed; }
+
+.toggle-btn {
+  padding: .32rem .75rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text2); font: inherit; font-size: .82rem;
+  cursor: pointer; transition: all .15s;
+}
+.toggle-btn.on { border-color: var(--accent); color: var(--text); background: #0d1930; }
+.toggle-btn strong { color: var(--accent-soft); }
+.toggle-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* The scenario toggle. Cyan, and with no ".on" state, because neither
+   distribution is the preferred one: the two mode toggles light up in the
+   accent to mean "the fast path is selected", and reusing that here would
+   claim Clustered is an optimization when it is simply a harder workload. */
+.dist-btn { border-color: #234a52; }
+.dist-btn strong { color: var(--cyan); }
+.dist-btn.clustered { border-color: var(--cyan); color: var(--text); background: #0c2126; }
+
+/* Pause gets orange rather than the accent the mode toggles use. Those two
+   select a configuration; this one suspends it, and colouring it the same
+   would read as a third algorithm switch. */
+.pause-btn { display: inline-flex; align-items: center; gap: .4rem; }
+.pause-btn.paused { border-color: var(--orange); color: var(--orange); background: #241a06; }
+.pause-btn kbd { font-size: .6rem; opacity: .7; }
+
+/* ---- AI panels --------------------------------------------------------- */
+.agent-note { color: var(--text2); font-size: .74rem; line-height: 1.5; margin: .3rem 0; }
+.agent-status, .agent-result { font-size: .78rem; padding: .3rem 0; }
+.agent-error { color: var(--red); font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-advice { font-size: .76rem; white-space: pre-wrap; line-height: 1.55; }
+/* Each candidate is a separate experiment -- its own build, its own
+   correctness check, its own benchmark run -- so each gets its own card. A
+   shared rule between them read as one long table where the rows happened to
+   have sub-headings. */
+.agent-candidate {
+  font-size: .74rem; padding: .6rem .7rem; margin-top: .5rem;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.agent-candidate strong { margin-right: .5rem; }
+.agent-candidate p { color: var(--text2); overflow-wrap: anywhere; }
+.agent-candidate table { width: 100%; font-size: .71rem; border-collapse: collapse; margin: .35rem 0; }
+.agent-candidate th, .agent-candidate td { padding: .2rem .3rem; text-align: left; border-bottom: 1px solid var(--border); }
+.agent-candidate pre { max-height: 150px; overflow: auto; font-size: .69rem; white-space: pre; }
+.ghost-btn {
+  padding: .3rem .6rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+  background: transparent; color: var(--text2); cursor: pointer;
+  font: inherit; font-size: .74rem; transition: all .15s; white-space: nowrap;
+}
+.ghost-btn:hover { border-color: var(--accent-soft); color: var(--accent-soft); }
+.apply-btn {
+  margin-top: .5rem; padding: .35rem .8rem; border: 1px solid var(--green);
+  border-radius: var(--radius-sm); background: transparent; color: var(--green);
+  cursor: pointer; font: inherit; font-size: .78rem;
+}
+.apply-btn:hover { background: var(--green); color: #08120a; }
+
+/* The AI Analyze report reads in place now rather than in a second window, so
+   it gets its own title bar inside the panel -- the heading and the close
+   control the popup used to provide. */
+.report { margin-top: .5rem; border-top: 1px solid var(--border); padding-top: .55rem; }
+.report-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: .75rem; margin-bottom: .55rem;
+}
+.report-heading { font-size: .88rem; font-weight: 600; color: var(--text); }
+.report-sub { margin-top: .2rem; font-size: .72rem; color: var(--text2); }
+
+.report-badges { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .6rem; }
+.badge {
+  padding: .25rem .55rem; border-radius: var(--radius-sm); font-size: .71rem;
+  background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text);
+  font-family: 'Cascadia Code', 'Consolas', monospace;
 }
 
 /* The agent's parsed verdict. Colour-coded by whether it agrees with the
    running configuration, because a disagreement is the actionable case. */
 .recommendation {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .6rem;
-  border-radius: 4px; padding: .45rem .6rem; font-size: .75rem;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .8rem;
+  border-radius: var(--radius-sm); padding: .55rem .7rem; font-size: .8rem;
+  margin-bottom: .6rem;
 }
-.recommendation strong { font-weight: 600; }
-.rec-agree  { background: #0d1a0d; border: 1px solid #2a4a2a; color: #9dc89d; }
-.rec-differ { background: #1f1608; border: 1px solid #4a3a1a; color: #e0c080; }
-.rec-conf { text-transform: uppercase; letter-spacing: .05em; font-size: .65rem; opacity: .8; }
-.rec-note { color: var(--text2); font-size: .7rem; }
-.rec-reason { flex-basis: 100%; margin: 0; font-size: .72rem; line-height: 1.45; opacity: .9; }
+.recommendation strong { font-weight: 600; color: var(--text); }
+.rec-agree  { background: #08130f; border: 1px solid #1f5a44; }
+.rec-differ { background: #1f1608; border: 1px solid #4a3a1a; }
+.rec-agree  .rec-conf { color: var(--teal); }
+.rec-differ .rec-conf { color: var(--orange); }
+.rec-conf { text-transform: uppercase; letter-spacing: .06em; font-size: .72rem; font-weight: 600; }
+.rec-note { color: var(--text2); font-size: .76rem; }
+.rec-reason { flex-basis: 100%; margin: 0; font-size: .75rem; line-height: 1.55; color: var(--text2); }
 
+.analysis-sections { display: flex; flex-direction: column; gap: .5rem; }
 .analysis {
-  background: #0d1a0d; border: 1px solid #2a4a2a; border-radius: 4px; padding: .6rem;
-  max-height: 180px; overflow-y: auto;
+  background: #061410; border: 1px solid #1f5a44; border-radius: var(--radius-sm);
+  padding: .7rem .8rem;
 }
-.analysis h4 { color: var(--green); font-size: .75rem; margin-bottom: .4rem; }
-.analysis pre { font-size: .72rem; line-height: 1.5; color: #9dc89d; white-space: pre-wrap; font-family: inherit; }
+.analysis h4 { color: var(--teal); font-size: .88rem; font-weight: 600; margin-bottom: .45rem; }
+/* The code section is the one piece that is not prose, so it drops the teal
+   tint and reads as source against the same background the snippet uses
+   everywhere else in the report. */
+.analysis-code { background: #080f0d; }
+.analysis-code .code-snippet { border-color: #1b4437; }
 
-/* Verified candidate experiment: compact enough for the existing sidebar. */
-.agent-experiment { padding: .6rem; border-bottom: 1px solid var(--border); max-height: 440px; overflow-y: auto; }
-.agent-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.agent-head h3 { font-size: .75rem; color: var(--text2); text-transform: uppercase; }
-.agent-head button { padding: .3rem .65rem; border: 1px solid var(--accent); border-radius: 4px; background: transparent; color: var(--accent); cursor: pointer; }
-.agent-head button:disabled { opacity: .5; cursor: wait; }
-.agent-note { color: var(--text2); font-size: .71rem; line-height: 1.45; margin: .4rem 0; }
-.agent-status, .agent-result { font-size: .76rem; padding: .35rem 0; }
-.agent-error { color: var(--red); font-size: .76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-advice { font-size: .74rem; white-space: pre-wrap; line-height: 1.45; max-height: 100px; overflow-y: auto; }
-.agent-candidate { border-top: 1px solid var(--border); padding: .45rem 0; font-size: .72rem; }
-.agent-candidate strong { margin-right: .5rem; }
-.agent-candidate p { color: var(--text2); overflow-wrap: anywhere; }
-.agent-candidate table { width: 100%; font-size: .69rem; border-collapse: collapse; margin: .35rem 0; }
-.agent-candidate th, .agent-candidate td { padding: .18rem .3rem; text-align: left; border-bottom: 1px solid var(--border); }
-.agent-candidate pre { max-height: 150px; overflow: auto; font-size: .67rem; white-space: pre; }
-
-/* Launcher row shared by both AI panels: the run button plus the open/close
-   control for its report window. */
-.panel-actions { display: flex; align-items: center; gap: .35rem; }
-.ghost-btn {
-  padding: .25rem .55rem; border: 1px solid var(--border); border-radius: 4px;
-  background: transparent; color: var(--text2); cursor: pointer;
-  font: inherit; font-size: .7rem; transition: all .15s;
+/* Rendered markdown. The model's replies are prose, one code block and the
+   occasional list -- anything richer never arrives, so nothing else is styled. */
+.md { font-size: .76rem; line-height: 1.65; color: #cfe8dd; }
+.md > * + * { margin-top: .5rem; }
+.md-para { overflow-wrap: anywhere; }
+.md-heading { color: var(--teal); font-size: .8rem; font-weight: 600; }
+.md-list { padding-left: 1.1rem; }
+.md-list li { margin-top: .2rem; }
+.md code {
+  font-family: 'Cascadia Code', 'Consolas', monospace; font-size: .92em;
+  background: rgba(46, 230, 168, .1); border-radius: 3px; padding: .05rem .25rem;
 }
-.ghost-btn:hover { border-color: var(--cyan); color: var(--cyan); }
-.apply-btn {
-  margin-top: .5rem; padding: .35rem .8rem; border: 1px solid var(--green);
-  border-radius: 4px; background: transparent; color: var(--green);
-  cursor: pointer; font: inherit; font-size: .78rem;
-}
-.apply-btn:hover { background: var(--green); color: #08120a; }
+.md strong { color: var(--text); font-weight: 600; }
 
-/* ---- Pop-out report windows -------------------------------------------
+.report-source { margin-top: .7rem; font-size: .76rem; color: var(--text2); }
+.report-source summary { cursor: pointer; padding: .3rem 0; }
+.code-snippet {
+  overflow: auto; background: #080b10; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: .6rem; font-size: .73rem; line-height: 1.55;
+  color: #b0c4de; font-family: 'Cascadia Code', 'Consolas', monospace;
+  max-height: 340px;
+}
+
+.report-loading { display: flex; align-items: center; gap: .8rem; padding: .8rem 0; color: var(--text2); }
+.spinner {
+  width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+  border: 3px solid var(--border-2); border-left-color: var(--accent-soft);
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Pop-out report window (still used by the Optimize experiment) -----
    The popup clones this stylesheet, so everything above is already in scope
-   there. What is left is undoing the sidebar's space constraints: the panels
-   were capped and scroll-boxed to survive in 480 px, and in a 1040 px window
-   those caps are the only thing still hiding the report. */
+   there. What is left is undoing the column's space constraints. */
 .popup-body { background: var(--bg); color: var(--text); min-height: 100vh; }
-.popup-root { max-width: 1040px; margin: 0 auto; padding: 0 1.2rem 2.5rem; }
+.popup-root { max-width: 1180px; margin: 0 auto; padding: 0 1.3rem 3rem; }
 
 .popup-titlebar {
   position: sticky; top: 0; z-index: 2;
   display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
-  padding: .9rem 0 .7rem; margin-bottom: .9rem;
+  padding: 1.1rem 0 .9rem; margin-bottom: 1.4rem;
   background: var(--bg); border-bottom: 1px solid var(--border);
 }
-.popup-titlebar h2 { font-size: 1rem; }
-.popup-sub { margin-top: .25rem; font-size: .75rem; color: var(--text2); }
+.popup-titlebar h2 { font-size: 1.3rem; }
+.popup-sub { margin-top: .3rem; font-size: .82rem; color: var(--text2); }
 .popup-close {
-  flex-shrink: 0; padding: .3rem .7rem; border: 1px solid var(--border);
-  border-radius: 4px; background: transparent; color: var(--text2);
-  cursor: pointer; font: inherit; font-size: .75rem;
+  flex-shrink: 0; padding: .4rem .9rem; border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm); background: transparent; color: var(--text2);
+  cursor: pointer; font: inherit; font-size: .82rem;
 }
 .popup-close:hover { border-color: var(--red); color: var(--red); }
 
 .popup-root .agent-experiment,
-.popup-root .code-panel { padding: 0; border: 0; max-height: none; overflow: visible; }
+.popup-root .code-panel { padding: 0; border: 0; background: none; }
 .popup-root .agent-advice,
 .popup-root .analysis { max-height: none; overflow: visible; }
 .popup-root .agent-candidate pre { max-height: 60vh; }
 .popup-root .code-snippet { max-height: 60vh; }
 .popup-root .analysis pre,
-.popup-root .agent-advice { font-size: .82rem; line-height: 1.6; }
+.popup-root .agent-advice { font-size: .92rem; line-height: 1.75; }
+/* The advice is the model's reasoning; the notes below it are provenance.
+   A clear break between them stops the two from reading as one paragraph. */
+.popup-root .agent-advice { margin-bottom: 1.1rem; }
 .popup-root .agent-note,
 .popup-root .agent-result,
-.popup-root .agent-status { font-size: .8rem; }
-.popup-root .agent-candidate { font-size: .78rem; }
-.popup-root .agent-candidate table { font-size: .76rem; }
+.popup-root .agent-status { font-size: .88rem; line-height: 1.7; margin: .1rem 0; }
 .popup-root .recommendation { font-size: .85rem; padding: .6rem .8rem; }
 
-.report-badges { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .9rem; }
-.badge {
-  padding: .25rem .55rem; border-radius: 4px; font-size: .72rem;
-  background: var(--surface); border: 1px solid var(--border); color: var(--text);
-  font-family: 'Cascadia Code', 'Consolas', monospace;
+/* Run state, at the top where it is read first. A tinted strip rather than a
+   bare spinner row: this is the only part of the report that changes while you
+   are looking at it, and for the minutes the experiment takes it is the whole
+   content of the page. */
+.progress-banner {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .7rem .9rem; margin-bottom: 1.4rem;
+  border-radius: var(--radius-sm);
+  background: #0b1524; border: 1px solid #1d3355;
+}
+.progress-text { flex: 1; font-size: .92rem; color: var(--accent-soft); }
+.progress-state { font-size: .88rem; color: var(--accent-soft); white-space: nowrap; }
+.progress-banner.is-done { background: #0a1512; border-color: #1f5a44; }
+.progress-banner.is-done .progress-text,
+.progress-banner.is-done .progress-state { color: var(--teal); }
+.progress-dot {
+  width: 12px; height: 12px; flex-shrink: 0; border-radius: 50%;
+  border: 2px solid var(--teal);
 }
 
-.report-loading { display: flex; align-items: center; gap: .8rem; padding: 1rem 0; color: var(--text2); }
-.spinner {
-  width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%;
-  border: 3px solid var(--border); border-left-color: var(--cyan);
-  animation: spin 1s linear infinite;
+.popup-root .agent-candidate {
+  font-size: .9rem; padding: 1.1rem 1.3rem; margin-top: 1rem;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+.popup-root .agent-candidate p { color: var(--text2); margin-top: .35rem; }
+.candidate-head { display: flex; align-items: baseline; gap: .8rem; }
+.candidate-head strong { margin-right: 0; font-size: .95rem; color: var(--text); }
+/* The status is what the candidate is doing, not part of what it is called. */
+.candidate-status { color: var(--text2); font-weight: 400; font-size: .9rem; margin-left: auto; }
 
-.report-source { margin-top: 1rem; font-size: .78rem; color: var(--text2); }
-.report-source summary { cursor: pointer; padding: .3rem 0; }
+/* The verdict. Teal is already "measured and good" on the analysis panels, and
+   the left bar makes the winning card findable by scrolling past it rather
+   than by reading every heading. */
+.agent-candidate.is-winner {
+  background: #0a1512; border-color: #1f5a44; border-left: 3px solid var(--teal);
+}
+.agent-candidate.is-winner .candidate-head strong { color: var(--teal); }
+.candidate-badge {
+  padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600;
+  color: #061410; background: var(--teal); letter-spacing: .02em;
+}
+.popup-root .candidate-badge { font-size: .78rem; padding: .15rem .6rem; }
+
+/* Four columns spread across the full width, no rules. The numbers are what is
+   being compared, so nothing else on the row should draw a line. */
+.popup-root .agent-candidate table {
+  width: 100%; font-size: .9rem; margin: .9rem 0 0;
+  table-layout: fixed;
+}
+.popup-root .agent-candidate th,
+.popup-root .agent-candidate td {
+  border-bottom: 0; padding: .35rem 0; text-align: left;
+}
+.popup-root .agent-candidate th { font-weight: 400; color: var(--text2); padding-bottom: .6rem; }
+.popup-root .agent-candidate td { font-variant-numeric: tabular-nums; }
+.popup-root .agent-candidate th:first-child,
+.popup-root .agent-candidate td:first-child { width: 46%; }
+
+/* Below the design's desktop target the two columns stop fitting side by side;
+   stacking keeps the canvas usable instead of squeezing it to a strip. */
+@media (max-width: 1100px) {
+  .app { overflow: auto; }
+  .app-grid { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+  .stage { min-height: 52vh; }
+  .side-col { overflow: visible; }
+}
