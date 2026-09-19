@@ -115,6 +115,7 @@ class AnalysisSections(BaseModel):
     diagnosis:      str | None = None
     snippet:        str | None = None
     expectedImpact: str | None = None
+    riskProjection: str | None = None
 
 
 class OptimizeResponse(BaseModel):
@@ -181,6 +182,7 @@ _SECTIONS = (
     ("diagnosis",      "## \ubcd1\ubaa9 \uc9c4\ub2e8",              ""),
     ("snippet",        "## \ucd5c\uc801\ud654\ub41c C++ \uc2a4\ub2c8\ud3ab", "cpp"),
     ("expectedImpact", "## \uc608\uc0c1 \ud6a8\uacfc",              ""),
+    ("riskProjection", "## \uc131\ub2a5 \uc800\ud558 \uc608\uce21",  ""),
 )
 
 

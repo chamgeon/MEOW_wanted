@@ -32,6 +32,7 @@ interface AnalysisSections {
   diagnosis?:      string | null;
   snippet?:        string | null;
   expectedImpact?: string | null;
+  riskProjection?: string | null;
 }
 
 interface Recommendation {
@@ -373,6 +374,12 @@ function AnalysisReport({ loading, analysis, sections, rec, agrees, collisionMod
             <section className="analysis analysis-impact">
               <h4>예상 효과</h4>
               <Markdown text={sections.expectedImpact} />
+            </section>
+          )}
+          {sections.riskProjection && (
+            <section className="analysis analysis-risk">
+              <h4>성능 저하 예측</h4>
+              <Markdown text={sections.riskProjection} />
             </section>
           )}
         </div>
