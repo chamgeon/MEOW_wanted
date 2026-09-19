@@ -268,6 +268,17 @@ def parse_reply(text: str) -> tuple[str, Recommendation | None, AnalysisSections
 
 @app.post("/api/optimize", response_model=OptimizeResponse)
 async def optimize(req: OptimizeRequest) -> OptimizeResponse:
+    """Synchronous report. Kept for v0.1.0 clients and the CLI.
+
+    The browser uses /api/analysis-jobs instead: a single request that stays
+    open for the length of a model call is at the mercy of whatever proxy sits
+    in front of this server, and the Vercel edge closes one well before a long
+    report finishes.
+    """
+    return await _run_analysis(req)
+
+
+async def _run_analysis(req: OptimizeRequest) -> OptimizeResponse:
     client = get_client()
     samples = len((req.telemetry or {}).get("records") or [])
     try:
@@ -300,6 +311,57 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
         raise HTTPException(status_code=502, detail=f"{e.status_code}: {e.message}")
     except openai.APIError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# The browser-facing half of /api/optimize. Submit returns immediately with an
+# id; the report is collected by polling. Every request is then short enough
+# that no proxy in front of this server can time one out mid-model-call.
+#
+# Unlike optimization jobs these are not written to disk. A report is cheap to
+# regenerate and worthless once its telemetry window has scrolled past, so a
+# restart dropping them costs one button press.
+analysis_jobs: dict[str, dict] = {}
+
+# Enough to outlast the polling of any report a user is still looking at,
+# bounded so a long-running server cannot accumulate reports forever.
+MAX_ANALYSIS_JOBS = 32
+
+
+async def _process_analysis(job_id: str, req: OptimizeRequest) -> None:
+    try:
+        result = await _run_analysis(req)
+        analysis_jobs[job_id] = {"jobId": job_id, "status": "ready", **result.model_dump()}
+    except HTTPException as exc:
+        analysis_jobs[job_id] = {"jobId": job_id, "status": "failed", "error": str(exc.detail)}
+    except Exception as exc:  # noqa: BLE001 - the status must reach the poller whatever broke
+        analysis_jobs[job_id] = {"jobId": job_id, "status": "failed", "error": str(exc)}
+
+
+@app.post("/api/analysis-jobs", status_code=202)
+async def create_analysis_job(req: OptimizeRequest) -> dict:
+    running = sum(job.get("status") == "running" for job in analysis_jobs.values())
+    if running >= 4:
+        raise HTTPException(status_code=429, detail="Analysis queue is full; try again in a moment")
+    # Oldest first, but never a job someone is still polling for.
+    for key, job in list(analysis_jobs.items()):
+        if len(analysis_jobs) < MAX_ANALYSIS_JOBS:
+            break
+        if job.get("status") != "running":
+            analysis_jobs.pop(key)
+    job_id = uuid.uuid4().hex
+    analysis_jobs[job_id] = {"jobId": job_id, "status": "running"}
+    asyncio.create_task(_process_analysis(job_id, req))
+    return {"jobId": job_id, "status": "running"}
+
+
+@app.get("/api/analysis-jobs/{job_id}")
+async def get_analysis_job(job_id: str) -> dict:
+    if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    job = analysis_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    return job
 
 
 @app.get("/health")
