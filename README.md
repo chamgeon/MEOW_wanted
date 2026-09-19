@@ -6,10 +6,15 @@
 
 C++ 시뮬레이션 코어를 WebAssembly로 컴파일해 브라우저에서 **엔티티 1만 개를 60 FPS로** 돌리는 성능 테크 데모입니다. 화면 위에서 두 가지 최적화 축을 실시간으로 켜고 끄면서 프레임 타임이 어떻게 변하는지 직접 볼 수 있습니다.
 
-| 토글 | A | B | 무엇을 보여주나 |
-|---|---|---|---|
-| **Collision** | Brute Force `O(N²)` | Dynamic QuadTree `O(N log N)` | 알고리즘 복잡도 |
-| **Memory** | AoS (Array of Structures) | SoA (Structure of Arrays) | 캐시 지역성 / DOD |
+
+| 토글 | 옵션 | 무엇을 보여주나 |
+|---|---|---|
+| **Collision** | BruteForce `O(N²)` / QuadTree `O(N log N)` / UniformGrid / SpatialHash | 알고리즘 복잡도 |
+| **Memory** | AoS (Array of Structures) / SoA (Structure of Arrays) | 캐시 지역성 / DOD |
+| **Speed** | 0.25× ~ 4× | 시뮬레이션 속도 배율 |
+| **Spawn** | Uniform / Clustered | 엔티티 공간 분포 — QuadTree가 실제로 이득을 보는지 결정하는 축 |
+
+> `Enemies` 슬라이더는 500 ~ 100,000까지 조절 가능하며, 10,000개 초과 시 BruteForce는 안전상 비활성화됩니다.
 
 ---
 
@@ -102,8 +107,10 @@ make dev                       # Vite 개발 서버
 ## 조작법과 관전 포인트
 
 - **이동**: `WASD` 또는 방향키
-- **Enemies 슬라이더**: 500 ~ 10,000
-- **Collision / Memory 버튼**: 클릭할 때마다 모드 전환
+- **Enemies 슬라이더**: 500 ~ 100,000 (10,000 초과 시 BruteForce 비활성화)
+- **Collision / Speed**: 드롭다운으로 선택
+- **Memory / Spawn**: 버튼 클릭으로 토글
+- **Pause**: `Space`
 
 HUD는 서로 혼동하기 쉬운 두 숫자를 분리해서 보여줍니다.
 
@@ -195,6 +202,18 @@ C++는 JS로 데이터를 직렬화해 넘기지 않습니다. Wasm 힙 안에 �
 주소는 힙이 성장하는 순간 무효화되므로 **매 프레임 다시 읽어야 합니다**. 특히 `setEnemyCount()`는 모든 배열을 재할당합니다.
 
 ---
+
+## AI 기능
+
+### AI Analyze
+현재 활성화된 코드 경로(Collision/Memory/Spawn 조합)의 실시간 성능 지표를 서버가 결정론적으로 계산한 뒤, 이를 근거로 LLM이 병목 원인을 해석해 보여줍니다. 화면 우측 "Active Code Path" 패널의 **AI Analyze** 버튼으로 실행하며, 결과는 별도 팝업 창으로도 볼 수 있습니다.
+
+### Optimize
+현재 설정(Collision/Memory/Spawn/Speed)을 기준으로, 대안 알고리즘 3개 × AoS/SoA 2개 = **총 6개 조합**을 실제 WASM 바이너리로 빌드해 동일 시드로 벤치마크 비교합니다. 모델이 임의로 C++ 코드를 생성하지 않고, 검증된 후보 생성기만 사용합니다. 최소 3개 이상의 성능 로그 구간이 쌓여야 실행 가능합니다.
+
+---
+
+
 
 ## AI 프로파일러 백엔드 (선택)
 
