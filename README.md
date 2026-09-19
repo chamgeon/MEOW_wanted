@@ -1,8 +1,7 @@
 # Vampire-Core Wasm (Team MEOW)
 
-> **Live backend**: https://meow-ai.p-e.kr/
-> 상태 확인: [`/health`](https://meow-ai.p-e.kr/health) · [`/api/agent-meta`](https://meow-ai.p-e.kr/api/agent-meta)
-
+> **라이브 데모**: https://meow-wanted.vercel.app/
+> **백엔드**: https://meow-ai.p-e.kr/ · 상태 확인: [`/health`](https://meow-ai.p-e.kr/health) · [`/api/agent-meta`](https://meow-ai.p-e.kr/api/agent-meta)
 
 C++ 시뮬레이션 코어를 WebAssembly로 컴파일해 브라우저에서 **엔티티 1만 개를 60 FPS로** 돌리는 성능 테크 데모입니다. 화면 위에서 두 가지 최적화 축을 실시간으로 켜고 끄면서 프레임 타임이 어떻게 변하는지 직접 볼 수 있습니다.
 
