@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { PerfSample, CollisionMode, MemoryMode, SpawnDist } from '../App';
 import { TELEMETRY_WINDOW_S } from '../logging/PerfLogger';
 import type { PerfLogger } from '../logging/PerfLogger';
@@ -166,6 +166,10 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
   const [sections, setSections] = useState<AnalysisSections | null>(null);
   const [rec,      setRec]      = useState<Recommendation | null>(null);
   const [loading,  setLoading]  = useState(false);
+  // The report is fetched as a job rather than a single long request: the
+  // model call outlives what the edge proxy in front of the API will hold
+  // open, so submit and collection are separate round trips.
+  const [jobId,    setJobId]    = useState('');
   // The report used to live in its own window because it did not fit a 480 px
   // sidebar. The sidebar is now the wide column of the two-column layout, so
   // the report reads fine in place -- and keeping it in the page means the
@@ -195,7 +199,7 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
     setSections(null);
     setRec(null);
     try {
-      const res = await fetch('/api/optimize', {
+      const res = await fetch('/api/analysis-jobs', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -208,16 +212,46 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setAnalysis(data.analysis);
-      setSections(data.sections ?? null);
-      setRec(data.recommendation ?? null);
+      const data: { jobId: string } = await res.json();
+      // loading stays true: the effect below owns it until the report lands.
+      setJobId(data.jobId);
     } catch (e: unknown) {
       setAnalysis(`Error: ${e instanceof Error ? e.message : 'unreachable backend'}`);
-    } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!jobId) return;
+    let disposed = false;
+    const settle = (finish: () => void) => {
+      if (disposed) return;
+      finish();
+      setLoading(false);
+      setJobId('');
+    };
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/analysis-jobs/${jobId}`);
+        if (!response.ok) throw new Error(await response.text());
+        const data = await response.json();
+        if (data.status === 'ready') {
+          settle(() => {
+            setAnalysis(data.analysis);
+            setSections(data.sections ?? null);
+            setRec(data.recommendation ?? null);
+          });
+        } else if (data.status === 'failed') {
+          settle(() => setAnalysis(`Error: ${data.error ?? 'analysis failed'}`));
+        }
+      } catch (cause) {
+        settle(() => setAnalysis(`Error: ${cause instanceof Error ? cause.message : 'unreachable backend'}`));
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1500);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [jobId]);
 
   // Shown separately from the prose so the verdict is legible at a glance, and
   // so it is obvious when the agent's pick differs from what is running now --
