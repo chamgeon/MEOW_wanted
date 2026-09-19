@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { PerfSample, CollisionMode, MemoryMode, SpawnDist } from '../App';
+import { TELEMETRY_WINDOW_S } from '../logging/PerfLogger';
 import type { PerfLogger } from '../logging/PerfLogger';
-import { usePopupWindow, PopupWindowContent } from './PopupWindow';
+import Markdown from './Markdown';
 
 interface Props {
   stats?:        PerfSample;
@@ -22,21 +23,23 @@ interface Props {
 /** The machine-parsed half of the optimizer's reply. Every field is optional
  *  because the server returns nulls rather than guesses when the block fails
  *  to parse -- acting on a fabricated mode would be worse than acting on none. */
+/** The model's three answers, still separate. The server also weaves them into
+ *  one markdown string for backwards compatibility, but the report shows them
+ *  as three distinct things -- a diagnosis, a refactoring, and its expected
+ *  effect -- so it reads them from here and never re-splits that markdown.
+ *  Absent when the model's reply was not parseable JSON. */
+interface AnalysisSections {
+  diagnosis?:      string | null;
+  snippet?:        string | null;
+  expectedImpact?: string | null;
+}
+
 interface Recommendation {
   collision?:  CollisionMode | null;
   memory?:     MemoryMode    | null;
   confidence?: string        | null;
   reason?:     string        | null;
 }
-
-// How much history travels with an analysis request.
-//
-// Thirty seconds is roughly the span in which a user toggles a mode, watches
-// the number move, and toggles back -- so the window usually contains both
-// sides of a comparison plus the marker that separates them. A full session
-// would be mostly redundant and would push the prompt into territory where the
-// model starts skimming rather than reading.
-const TELEMETRY_WINDOW_S = 30;
 
 const SNIPPETS: Record<CollisionMode, Record<MemoryMode, string>> = {
   BruteForce: {
@@ -160,29 +163,36 @@ void EngineCore::fireAura() {
 
 export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist, logger }: Props) {
   const [analysis, setAnalysis] = useState('');
+  const [sections, setSections] = useState<AnalysisSections | null>(null);
   const [rec,      setRec]      = useState<Recommendation | null>(null);
   const [loading,  setLoading]  = useState(false);
-
-  // The report is read, not glanced at -- prose plus a verdict block does not
-  // fit the 480 px sidebar. It goes to its own window; the sidebar keeps the
-  // snippet and the trigger.
-  const popup = usePopupWindow('vc_ai_analyze', 'AI Analyze — Vampire-Core Wasm');
+  // The report used to live in its own window because it did not fit a 480 px
+  // sidebar. The sidebar is now the wide column of the two-column layout, so
+  // the report reads fine in place -- and keeping it in the page means the
+  // numbers it quotes sit next to the HUD that produced them. Dismissing it
+  // only hides it: re-opening must not cost another round trip to the model.
+  const [reportOpen, setReportOpen] = useState(true);
 
   const snippet = SNIPPETS[collisionMode][memoryMode];
 
+  // The size of the window that is actually posted, not the size of the
+  // session. These two diverge after the first 30 seconds, and this number is
+  // printed in three places that all claim to describe the request -- the
+  // button, the report subheading and the telemetry badge -- so reading it off
+  // the whole log made all three overstate the evidence by however long the
+  // demo had been running.
+  //
   // The endpoint accepts a request with no telemetry (that was the original
   // contract), so the button stays usable during the first second of a run --
   // it just sends less evidence, and says so in the prompt.
-  const recordCount = logger.getRecords().length;
+  const recordCount = logger.windowCount(TELEMETRY_WINDOW_S);
 
   const runAnalysis = async () => {
     if (!stats) return;
-    // Synchronously, inside the click: window.open() only works while the
-    // user activation from this event is still live, and the await below
-    // outlives it.
-    popup.open();
+    setReportOpen(true);
     setLoading(true);
     setAnalysis('');
+    setSections(null);
     setRec(null);
     try {
       const res = await fetch('/api/optimize', {
@@ -200,6 +210,7 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setAnalysis(data.analysis);
+      setSections(data.sections ?? null);
       setRec(data.recommendation ?? null);
     } catch (e: unknown) {
       setAnalysis(`Error: ${e instanceof Error ? e.message : 'unreachable backend'}`);
@@ -215,69 +226,57 @@ export default function CodePanel({ stats, collisionMode, memoryMode, spawnDist,
     && (!rec.collision || rec.collision === collisionMode)
     && (!rec.memory    || rec.memory    === memoryMode);
 
-  const hasResult = loading || !!analysis || !!rec;
-
-  const report = (
-    <AnalysisReport
-      loading={loading} analysis={analysis} rec={rec} agrees={agrees}
-      collisionMode={collisionMode} memoryMode={memoryMode} spawnDist={spawnDist}
-      stats={stats} snippet={snippet} recordCount={recordCount}
-    />
-  );
+  const hasResult = loading || !!analysis || !!rec || !!sections;
 
   return (
-    <div className="code-panel">
-      <div className="code-panel-header">
+    <section className="panel code-panel">
+      <div className="panel-head">
         {/* The spawn distribution is named here even though it changes nothing
-            in the snippet below, because the panel's claim is "this is what is
-            producing the numbers" -- and at fixed source, the world is half
-            of that. */}
-        <h3>Active Code Path &mdash; {collisionMode} / {memoryMode} <span className="code-panel-dist">on {spawnDist}</span></h3>
-        <div className="panel-actions">
-          {/* Re-open, not re-run: closing the window must not cost another
-              round trip to the model. */}
-          {hasResult && !popup.isOpen && !popup.blocked && (
-            <button type="button" className="ghost-btn" onClick={() => popup.open()}>결과 창 열기</button>
-          )}
-          {popup.isOpen && (
-            <button type="button" className="ghost-btn" onClick={popup.close}>결과 창 닫기</button>
-          )}
-          <button onClick={runAnalysis} disabled={loading || !stats}>
-            {loading ? 'Analyzing...' : `AI Analyze (${recordCount}s)`}
-          </button>
-        </div>
+            in the snippet the report carries, because the panel's claim is
+            "this is what is producing the numbers" -- and at fixed source, the
+            world is half of that. */}
+        <h3 className="panel-title">
+          Active Code Path &mdash; {collisionMode} / {memoryMode}{' '}
+          <span className="panel-title-dist">on {spawnDist}</span>
+        </h3>
+        <button type="button" className="btn btn-accent" onClick={runAnalysis} disabled={loading || !stats}>
+          {loading ? 'Analyzing...' : `AI Analyze (${recordCount}s)`}
+        </button>
       </div>
-      <pre className="code-snippet"><code>{snippet}</code></pre>
-      <p className="agent-note">위 코드는 설명용 요약입니다. 게임은 빌드된 WASM의 실제 C++ 코드를 실행합니다.</p>
-      {popup.blocked
-        ? <>
-            <p className="agent-error" role="alert">
-              팝업이 차단되어 결과를 이 패널에 표시합니다. 브라우저에서 이 사이트의 팝업을 허용하면 새 창으로 열립니다.
-            </p>
-            {hasResult && report}
-          </>
-        : hasResult && (
-            <p className="agent-note">
-              {popup.isOpen ? '분석 결과는 새 창에 표시됩니다.' : '결과 창이 닫혔습니다. “결과 창 열기”로 다시 볼 수 있습니다.'}
-            </p>
+
+      {hasResult && (
+        <div className="report">
+          <div className="report-head">
+            <div>
+              <h4 className="report-heading">AI Analyze &mdash; 활성 코드 경로 진단</h4>
+              <p className="report-sub">
+                {collisionMode} / {memoryMode} · {spawnDist} · 최근 {TELEMETRY_WINDOW_S}s 텔레메트리 {recordCount}개 구간
+              </p>
+            </div>
+            <button type="button" className="btn btn-ghost" onClick={() => setReportOpen(o => !o)}>
+              {reportOpen ? '창 닫기' : '결과 열기'}
+            </button>
+          </div>
+          {reportOpen && (
+            <AnalysisReport
+              loading={loading} analysis={analysis} sections={sections} rec={rec} agrees={agrees}
+              collisionMode={collisionMode} memoryMode={memoryMode} spawnDist={spawnDist}
+              stats={stats} snippet={snippet} recordCount={recordCount}
+            />
           )}
-      <PopupWindowContent
-        handle={popup}
-        heading="AI Analyze — 활성 코드 경로 진단"
-        subheading={`${collisionMode} / ${memoryMode} · ${spawnDist} · 최근 ${TELEMETRY_WINDOW_S}s 텔레메트리 ${recordCount}개 구간`}
-      >
-        {report}
-      </PopupWindowContent>
-    </div>
+        </div>
+      )}
+    </section>
   );
 }
 
-/** The report body. Rendered into the popup normally, and inline only when the
- *  popup blocker refused the window -- so there is exactly one copy of it. */
-function AnalysisReport({ loading, analysis, rec, agrees, collisionMode, memoryMode, spawnDist,
+/** The report body: badges, the parsed verdict, the prose, and the snippet
+ *  that was sent with the request. */
+function AnalysisReport({ loading, analysis, sections, rec, agrees, collisionMode, memoryMode, spawnDist,
   stats, snippet, recordCount }: {
   loading:       boolean;
   analysis:      string;
+  sections:      AnalysisSections | null;
   rec:           Recommendation | null;
   agrees:        boolean;
   collisionMode: CollisionMode;
@@ -317,13 +316,42 @@ function AnalysisReport({ loading, analysis, rec, agrees, collisionMode, memoryM
           {rec.reason && <p className="rec-reason">{rec.reason}</p>}
         </div>
       )}
-      {analysis && (
-        <div className="analysis">
-          <h4>AI Analysis</h4>
-          <pre>{analysis}</pre>
+      {/* Three cards, not one blob. The diagnosis, the refactoring and its
+          expected effect answer different questions and get compared against
+          different things -- the telemetry above, the running code path, and
+          the recommendation bar -- so stacking them under one "AI Analysis"
+          heading made the reader do the splitting. */}
+      {sections ? (
+        <div className="analysis-sections">
+          {sections.diagnosis && (
+            <section className="analysis analysis-diagnosis">
+              <h4>병목 진단</h4>
+              <Markdown text={sections.diagnosis} />
+            </section>
+          )}
+          {sections.snippet && (
+            <section className="analysis analysis-code">
+              <h4>최적화된 C++ 스니펫</h4>
+              <pre className="code-snippet"><code>{sections.snippet}</code></pre>
+            </section>
+          )}
+          {sections.expectedImpact && (
+            <section className="analysis analysis-impact">
+              <h4>예상 효과</h4>
+              <Markdown text={sections.expectedImpact} />
+            </section>
+          )}
         </div>
+      ) : analysis && (
+        /* No sections means the model ignored the JSON contract, so `analysis`
+           is raw text of unknown shape. Rendered rather than dumped: literal
+           `##` and backticks on screen read as a broken report. */
+        <section className="analysis">
+          <h4>AI Analysis</h4>
+          <Markdown text={analysis} />
+        </section>
       )}
-      {(analysis || rec) && (
+      {(analysis || rec || sections) && (
         <details className="report-source">
           <summary>분석에 함께 보낸 코드 요약</summary>
           <pre className="code-snippet"><code>{snippet}</code></pre>

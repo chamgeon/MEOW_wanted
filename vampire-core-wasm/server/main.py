@@ -101,11 +101,28 @@ class Recommendation(BaseModel):
     reason:     str | None = None
 
 
+class AnalysisSections(BaseModel):
+    """The model's three answers, still separate.
+
+    They are also woven into `analysis` as one markdown string, which is the
+    original contract and stays. This field exists because the client renders
+    them as three distinct things -- a diagnosis, a code block, and an expected
+    effect -- and re-splitting the woven markdown in the browser to get them
+    back would be parsing our own output. Optional because a reply that was not
+    valid JSON has no sections to report, only text.
+    """
+
+    diagnosis:      str | None = None
+    snippet:        str | None = None
+    expectedImpact: str | None = None
+
+
 class OptimizeResponse(BaseModel):
     analysis: str
     model: str
     recommendation: Recommendation | None = None
     telemetrySamples: int = 0
+    sections: AnalysisSections | None = None
 
 
 _FIELD_RE = re.compile(r"^\s*(collision|memory|confidence|reason)\s*:\s*(.+?)\s*$", re.IGNORECASE)
@@ -209,14 +226,29 @@ def _recommendation_from(obj: Any) -> Recommendation | None:
     return rec if (rec.collision or rec.memory) else None
 
 
-def parse_reply(text: str) -> tuple[str, Recommendation | None]:
-    """Split the model's reply into display markdown and the parsed verdict.
+def _sections_from(data: dict[str, Any]) -> AnalysisSections | None:
+    """The same three fields _weave_markdown renders, handed over unwoven.
+
+    Returns None when every field is blank, so the client can tell "the model
+    returned no sections" from "the model returned empty ones" -- the same
+    distinction _weave_markdown makes by omitting a heading over nothing.
+    """
+    sections = AnalysisSections(**{
+        key: (str(data.get(key) or "").strip() or None) for key, _, _ in _SECTIONS
+    })
+    return sections if any(sections.model_dump().values()) else None
+
+
+def parse_reply(text: str) -> tuple[str, Recommendation | None, AnalysisSections | None]:
+    """Split the model's reply into display markdown, the parsed verdict, and
+    the individual sections behind that markdown.
 
     Degrades instead of failing. A reply that is not valid JSON -- a stray
     preamble, or a response truncated by MAX_TOKENS mid-snippet -- is passed
     through verbatim and handed to the old markdown parser for the verdict. The
     user then sees a malformed answer, which is recoverable; raising here would
-    show them an empty report window, which is not.
+    show them an empty report window, which is not. That path has no sections
+    to report: the client falls back to rendering `analysis` itself.
     """
     raw = text.strip()
     if raw.startswith("```"):                      # fenced despite the instruction
@@ -224,10 +256,14 @@ def parse_reply(text: str) -> tuple[str, Recommendation | None]:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
-        return text, parse_recommendation(text)
+        return text, parse_recommendation(text), None
     if not isinstance(data, dict):
-        return text, parse_recommendation(text)
-    return _weave_markdown(data) or text, _recommendation_from(data.get("recommendation"))
+        return text, parse_recommendation(text), None
+    return (
+        _weave_markdown(data) or text,
+        _recommendation_from(data.get("recommendation")),
+        _sections_from(data),
+    )
 
 
 @app.post("/api/optimize", response_model=OptimizeResponse)
@@ -252,12 +288,13 @@ async def optimize(req: OptimizeRequest) -> OptimizeResponse:
             ),
         )
         text = message.output_text
-        analysis, recommendation = parse_reply(text)
+        analysis, recommendation, sections = parse_reply(text)
         return OptimizeResponse(
             analysis=analysis,
             model=MODEL,
             recommendation=recommendation,
             telemetrySamples=samples,
+            sections=sections,
         )
     except openai.APIStatusError as e:
         raise HTTPException(status_code=502, detail=f"{e.status_code}: {e.message}")

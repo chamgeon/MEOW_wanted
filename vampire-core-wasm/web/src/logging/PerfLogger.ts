@@ -47,6 +47,22 @@ export type MemoryMode    = 'AoS' | 'SoA';
  */
 export type SpawnDistribution = 'Uniform' | 'Clustered';
 
+/**
+ * How much history travels with an analysis request, and therefore the largest
+ * number of 1 Hz records any panel may claim to be sending.
+ *
+ * Thirty seconds is roughly the span in which a user toggles a mode, watches
+ * the number move, and toggles back -- so the window usually contains both
+ * sides of a comparison plus the marker that separates them. A full session
+ * would be mostly redundant and would push the prompt into territory where the
+ * model starts skimming rather than reading.
+ *
+ * It lives here rather than in a panel because both AI panels send a window and
+ * the figure has to be the same one: two panels disagreeing about how much
+ * evidence "recent" means is a reporting bug waiting to happen.
+ */
+export const TELEMETRY_WINDOW_S = 30;
+
 /** Distribution of a per-frame cost over one 1 Hz window, in milliseconds. */
 export interface Dist {
   mean: number;
@@ -345,17 +361,39 @@ export class PerfLogger {
    * mostly redundant, and the tail is what describes the configuration the
    * user is actually looking at right now.
    */
-  window(seconds = 30): TelemetrySession {
-    // At 100,000 entities a frame may take over a second, so emission cannot
-    // stay at exactly 1 Hz. Select by wall-clock timestamps, not row count.
-    const newest = this.records[this.records.length - 1]?.t ?? 0;
-    const from = Math.max(0, newest - seconds);
-    const records = this.records.filter(record => record.t >= from);
+  window(seconds = TELEMETRY_WINDOW_S): TelemetrySession {
+    const from = this.windowStart(seconds);
     return {
       meta:    this.meta,
       markers: this.markers.filter(m => m.t >= from),
-      records,
+      records: this.records.filter(record => record.t >= from),
     };
+  }
+
+  /**
+   * How many records window() would return, without building it.
+   *
+   * The UI states the size of the evidence it is about to send, and it does so
+   * on every render. Counting is the whole of that question, so it should not
+   * cost two array copies -- and reading it off getRecords().length instead,
+   * as the panels used to, silently reported the length of the entire session:
+   * a five-minute run claimed "telemetry 300s" for a request carrying 30.
+   */
+  windowCount(seconds = TELEMETRY_WINDOW_S): number {
+    const from = this.windowStart(seconds);
+    // Records are pushed in time order, so the window is a suffix: walk back
+    // from the newest and stop at the first row outside it.
+    let n = 0;
+    for (let i = this.records.length - 1; i >= 0 && this.records[i].t >= from; --i) ++n;
+    return n;
+  }
+
+  /** Timestamp the window opens at. At 100,000 entities a frame may take over
+   *  a second, so emission cannot stay at exactly 1 Hz -- the window is always
+   *  selected by wall-clock timestamp, never by row count. */
+  private windowStart(seconds: number): number {
+    const newest = this.records[this.records.length - 1]?.t ?? 0;
+    return Math.max(0, newest - seconds);
   }
 
   /** One JSON object per line: greppable, appendable, and streamable into a

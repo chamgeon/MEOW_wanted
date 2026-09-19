@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CollisionMode, MemoryMode, SpawnDist } from '../App';
+import { TELEMETRY_WINDOW_S } from '../logging/PerfLogger';
 import type { PerfLogger } from '../logging/PerfLogger';
 import { usePopupWindow, PopupWindowContent } from './PopupWindow';
 
@@ -62,7 +63,15 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
   // Six candidate combinations, each with a benchmark table and possibly a
   // diff. That is a document, and the sidebar was clipping it to a 440 px
   // scroll box -- so it gets its own window.
-  const popup = usePopupWindow('vc_optimize', 'AI Optimization Experiment - Vampire-Core Wasm');
+  const popup = usePopupWindow(
+    'vc_optimize',
+    'AI Optimization Experiment - Vampire-Core Wasm',
+    // Six candidates x a three-row benchmark table, laid out as four columns.
+    // At 1040 the speedup column wrapped under the candidate column; past
+    // ~1200 the rows get so wide that the eye loses the line between the
+    // condition and its speedup.
+    'width=1180,height=860,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes',
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -100,7 +109,7 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
     setSubmitting(true);
     setError('');
     try {
-      const telemetry = logger.window(30);
+      const telemetry = logger.window(TELEMETRY_WINDOW_S);
       const comparable = telemetry.records.filter(r => r.collisionMode === collisionMode &&
         r.memoryMode === memoryMode && r.distribution === distribution &&
         r.speedMultiplier === speedMultiplier && r.frames >= 1);
@@ -138,9 +147,9 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
   );
 
   return (
-    <section className="agent-experiment" aria-label="Verified optimization agent">
-      <div className="agent-head">
-        <h3>AI Optimization Experiment</h3>
+    <section className="panel agent-experiment" aria-label="Verified optimization agent">
+      <div className="panel-head">
+        <h3 className="panel-title">AI Optimization Experiment</h3>
         <div className="panel-actions">
           {/* Re-open, not re-run: closing the window must not cost another
               multi-minute experiment. */}
@@ -150,7 +159,7 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
           {popup.isOpen && (
             <button type="button" className="ghost-btn" onClick={popup.close}>결과 창 닫기</button>
           )}
-          <button type="button" onClick={() => void start()} disabled={running}>
+          <button type="button" className="btn btn-accent" onClick={() => void start()} disabled={running}>
             {running ? '실험 중…' : 'Optimize'}
           </button>
         </div>
@@ -173,8 +182,8 @@ export default function AgentExperimentPanel({ logger, collisionMode, memoryMode
           )}
       <PopupWindowContent
         handle={popup}
-        heading="AI Optimization Experiment - 검증된 후보 비교"
-        subheading={`기준 ${collisionMode}/${memoryMode} · ${distribution} · ${speedMultiplier}×`}
+        heading="AI Optimization Experiment · 6개 후보 벤치마크"
+        subheading={`기준 ${collisionMode}/${memoryMode} · ${distribution} · ${speedMultiplier}× · Same seed`}
       >
         {report}
       </PopupWindowContent>
@@ -199,24 +208,31 @@ function ExperimentReport({ job, error, running, currentSourceHash, collisionMod
 }) {
   return (
     <div className="experiment-report">
-      <div className="report-badges">
-        <span className="badge">기준 {collisionMode} / {memoryMode}</span>
-        <span className="badge">{distribution}</span>
-        <span className="badge">{speedMultiplier}×</span>
-        {job && <span className="badge">job {job.jobId.slice(0, 8)}</span>}
-        {job && <span className="badge">{job.status}</span>}
-      </div>
+      {/* The baseline, the distribution and the speed used to be five chips
+          above the report. They say the same thing as the subheading directly
+          above them, so the design drops them and this follows -- the first
+          thing on the page is now the state of the run, which is the one part
+          that changes while you watch it. */}
       {error && <p className="agent-error" role="alert">{error}</p>}
-      {running && (
-        <div className="report-loading" role="status">
-          <span className="spinner" aria-hidden="true" />
-          <p>후보 6개 조합을 빌드하고 동일 조건에서 벤치마크하는 중입니다…</p>
+      {(running || job) && (
+        <div className={`progress-banner ${running ? 'is-running' : 'is-done'}`} role="status">
+          {running
+            ? <span className="spinner" aria-hidden="true" />
+            : <span className="progress-dot" aria-hidden="true" />}
+          <p className="progress-text">
+            {running
+              ? '후보 6개 조합을 빌드하고 동일 조건에서 벤치마크하는 중입니다…'
+              : '벤치마크가 끝났습니다. 후보별 수치를 확인하세요.'}
+          </p>
+          <span className="progress-state">
+            {running ? '진행 중…' : job?.status}
+          </span>
         </div>
       )}
       {job?.aiAdvice && <p className="agent-advice">{job.aiAdvice}</p>}
       {job?.advisorMode && <p className="agent-note">Advisor: {job.advisorMode}</p>}
       {job?.observations && <p className="agent-note">
-        분석 입력: 최근 30초 중 동일 설정의 {job.observations.records}개 로그 구간 · 적 {job.observations.entityMin.toLocaleString()}–{job.observations.entityMax.toLocaleString()}명
+        분석 입력: 최근 {TELEMETRY_WINDOW_S}초 중 동일 설정의 {job.observations.records}개 로그 구간 · 적 {job.observations.entityMin.toLocaleString()}–{job.observations.entityMax.toLocaleString()}명
         · FPS 중앙값 {job.observations.fpsMedian ?? '—'} · Sim 중앙값 {job.observations.simMedianMs} ms
         · 1초 구간 p99 중앙값 {job.observations.windowP99MedianMs} ms · Frame 중앙값 {job.observations.frameMedianMs} ms
         · 배속 {job.observations.speedMultiplier ?? 1}× · 프레임 표본 {job.observations.framesTotal ?? '—'}개
@@ -227,12 +243,22 @@ function ExperimentReport({ job, error, running, currentSourceHash, collisionMod
       {job?.candidates?.length ? (
         <div className="agent-candidates">
           <p className="agent-note">원본: {job.baseline?.algorithm ?? collisionMode}/{job.baseline?.memory ?? memoryMode} · 후보는 같은 원본과 비교</p>
-          {job.candidates.map(candidate => (
-            <div className="agent-candidate" key={`${candidate.algorithm}-${candidate.memoryMode ?? 'legacy'}`}>
-              <strong>{candidate.algorithm}/{candidate.memoryMode ?? memoryMode}
-                {job.winner === candidate.algorithm && job.winnerMemory === candidate.memoryMode ? ' · 추천' : ''}
-              </strong>
-              <span>{candidate.status}</span>
+          {job.candidates.map(candidate => {
+            // The recommendation is the one row the reader is looking for, and
+            // it was being marked by appending " . 추천" inside the candidate's
+            // own name -- invisible in a column of six similar names.
+            const isWinner = job.winner === candidate.algorithm
+              && job.winnerMemory === candidate.memoryMode;
+            return (
+            <div
+              className={`agent-candidate${isWinner ? ' is-winner' : ''}`}
+              key={`${candidate.algorithm}-${candidate.memoryMode ?? 'legacy'}`}
+            >
+              <div className="candidate-head">
+                <strong>{candidate.algorithm}/{candidate.memoryMode ?? memoryMode}</strong>
+                {isWinner && <span className="candidate-badge">추천</span>}
+                <span className="candidate-status">{candidate.status}</span>
+              </div>
               {candidate.sourceKind === 'existing' && <p>게임에 이미 있는 코드 경로이므로 별도 코드 diff는 없습니다.</p>}
               {candidate.reason && <p>{candidate.reason}</p>}
               {candidate.correctness?.length ? (
@@ -256,7 +282,8 @@ function ExperimentReport({ job, error, running, currentSourceHash, collisionMod
               ) : null}
               {candidate.diff && <details><summary>코드 diff</summary><pre>{candidate.diff}</pre></details>}
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
       {job && TERMINAL.has(job.status) && (

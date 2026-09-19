@@ -444,111 +444,128 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>Vampire-Core Wasm <span className="subtitle">Performance Tech Demo</span></h1>
-        <div className="controls">
-          <label className="ctrl-label">
-            Enemies:
-            <input type="range" min={500} max={100000} step={500} value={enemyDraft}
-              disabled={!wasmReady} title="손을 놓으면 적 수가 적용됩니다"
-              onChange={e => setEnemyDraft(Number(e.target.value))}
-              onPointerUp={e => changeEnemyCount(Number(e.currentTarget.value))}
-              onKeyUp={e => changeEnemyCount(Number(e.currentTarget.value))}
-              onBlur={e => changeEnemyCount(Number(e.currentTarget.value))} />
-            <span className="ctrl-val">{enemyDraft.toLocaleString()}</span>
-          </label>
-          <label className="ctrl-label" htmlFor="collision-mode">
-            Collision:
-            <select id="collision-mode" className="mode-select" value={collisionMode}
-              disabled={!wasmReady}
-              onChange={e => changeCollision(e.target.value as CollisionMode)}>
-              <option value="BruteForce" disabled={enemyCount > 10000}>BruteForce</option>
-              <option value="QuadTree">QuadTree</option>
-              <option value="UniformGrid">UniformGrid</option>
-              <option value="SpatialHash">SpatialHash</option>
-            </select>
-          </label>
-          <label className="ctrl-label" htmlFor="simulation-speed">
-            Speed:
-            <select id="simulation-speed" className="mode-select" value={speedMultiplier}
-              disabled={!wasmReady} onChange={e => changeSpeed(Number(e.target.value))}>
-              <option value={0.25}>0.25×</option>
-              <option value={0.5}>0.5×</option>
-              <option value={1}>1×</option>
-              <option value={2}>2×</option>
-              <option value={4}>4×</option>
-            </select>
-          </label>
-          <button className={`toggle-btn ${memoryMode === 'SoA' ? 'on' : ''}`} onClick={toggleMemory}>
-            Memory: <strong>{memoryMode}</strong>
-          </button>
-          {/* Deliberately NOT styled with the same "on" highlight as the two
-              mode buttons. Those have a fast path and a slow path, so green
-              means "the good one". Neither distribution is the good one --
-              which is the whole point of the axis. */}
-          <button
-            className={`toggle-btn dist-btn ${spawnDist === 'Clustered' ? 'clustered' : ''}`}
-            onClick={toggleDistribution}
-            disabled={!wasmReady}
-            title="Clustered packs the world into 5 blobs; Uniform spreads it evenly. This is what decides whether the QuadTree is worth its build cost."
-          >
-            Spawn: <strong>{spawnDist}</strong>
-          </button>
-          <button
-            className={`toggle-btn pause-btn ${paused ? 'paused' : ''}`}
-            onClick={togglePause}
-            disabled={!wasmReady}
-            title="Space or P"
-          >
-            {paused ? 'Resume' : 'Pause'} <kbd>Space</kbd>
-          </button>
-        </div>
-        {safetyNotice && <p className="hud-warn" role="status">{safetyNotice}</p>}
-        {latest && (
-          <div className="hud">
-            <span className={latest.fps < 30 ? 'hud-bad' : 'hud-good'}>FPS: {latest.fps.toFixed(1)}</span>
-            <span title="C++ EngineCore::tick only">Sim: {latest.simMs.toFixed(2)} ms</span>
-            <span title="tick + canvas draw, per frame">Frame: {latest.frameMs.toFixed(2)} ms</span>
-            <span>Alive: {latest.entities.toLocaleString()}</span>
-            <span className="hud-kills" title="Enemies destroyed by the 2 s aura pulse">
-              Kills: {latest.kills.toLocaleString()}
-            </span>
-            {/* The figures to the left are the last LIVE window, not a reading
-                taken while paused -- nothing is sampled while paused. Labelling
-                that is the difference between a frozen HUD and a wrong one. */}
-            {paused && <span className="hud-paused" title="Values are from the last running second">PAUSED</span>}
+      {/* Two columns. Left is the thing being measured -- the field, the two
+          charts, and the 1 Hz log. Right is everything that describes or
+          changes it. The old full-width header put the controls as far from
+          the panels that react to them as the layout allowed. */}
+      <main className="app-grid">
+        <section className="stage-col">
+          <div className="panel stage">
+            {/* The overlay is a sibling of the canvas rather than something
+                drawn into it: drawing "PAUSED" through the 2D context would
+                mean the canvas no longer holds the last simulated frame, so
+                resuming would flash the text for one frame until the next draw
+                overwrote it. */}
+            <div className="stage-canvas">
+              <GameCanvas engine={engineRef} module={moduleRef} wasmReady={wasmReady} apiRef={canvasApiRef} />
+              {paused && (
+                <div className="stage-paused">
+                  <span className="stage-paused-tag">PAUSED</span>
+                  <span className="stage-paused-note">simulation and telemetry stopped</span>
+                </div>
+              )}
+            </div>
+            <div className="stage-help">
+              <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
+              <span><kbd>Space</kbd> pause</span>
+              <span className="stage-help-aura">Aura pulses every 2.00 s &mdash; enemies inside the ring take damage</span>
+            </div>
           </div>
-        )}
-        {!wasmReady && (
-          <div className="hud hud-warn">
-            Wasm not loaded &mdash; build core first (<code>make wasm</code>, or <code>.\build-wasm.ps1</code> on Windows)
-          </div>
-        )}
-      </header>
-      <main className="app-body">
-        <div className="stage">
-          {/* The overlay is a sibling of the canvas rather than something drawn
-              into it: drawing "PAUSED" through the 2D context would mean the
-              canvas no longer holds the last simulated frame, so resuming would
-              flash the text for one frame until the next draw overwrote it. */}
-          <div className="stage-canvas">
-            <GameCanvas engine={engineRef} module={moduleRef} wasmReady={wasmReady} apiRef={canvasApiRef} />
-            {paused && (
-              <div className="stage-paused">
-                <span className="stage-paused-tag">PAUSED</span>
-                <span className="stage-paused-note">simulation and telemetry stopped</span>
-              </div>
-            )}
-          </div>
-          <div className="stage-help">
-            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
-            <span><kbd>Space</kbd> pause</span>
-            <span className="stage-help-aura">Aura pulses every 2.00 s &mdash; enemies inside the ring take damage</span>
-          </div>
-        </div>
-        <aside className="sidebar">
+
           <MetricGraph history={history} />
           <TelemetryBar record={logRecord} count={logCount} onDownload={() => downloadNdjson(loggerRef.current!)} />
+        </section>
+
+        <aside className="side-col">
+          {latest && (
+            <div className="hud">
+              <span className={latest.fps < 30 ? 'hud-bad' : 'hud-good'}>FPS: {latest.fps.toFixed(1)}</span>
+              <span title="C++ EngineCore::tick only">Sim: {latest.simMs.toFixed(2)} ms</span>
+              <span title="tick + canvas draw, per frame">Frame: {latest.frameMs.toFixed(2)} ms</span>
+              <span>Alive: {latest.entities.toLocaleString()}</span>
+              <span className="hud-kills" title="Enemies destroyed by the 2 s aura pulse">
+                Kills: {latest.kills.toLocaleString()}
+              </span>
+              {/* The figures to the left are the last LIVE window, not a reading
+                  taken while paused -- nothing is sampled while paused.
+                  Labelling that is the difference between a frozen HUD and a
+                  wrong one. */}
+              {paused && <span className="hud-paused" title="Values are from the last running second">PAUSED</span>}
+            </div>
+          )}
+
+          <div className="panel title-card">
+            <h1>Vampire-Core Wasm <span className="subtitle">Performance Tech Demo</span></h1>
+            <label className="ctrl-label">
+              Enemies
+              <input type="range" min={500} max={100000} step={500} value={enemyDraft}
+                disabled={!wasmReady} title="손을 놓으면 적 수가 적용됩니다"
+                onChange={e => setEnemyDraft(Number(e.target.value))}
+                onPointerUp={e => changeEnemyCount(Number(e.currentTarget.value))}
+                onKeyUp={e => changeEnemyCount(Number(e.currentTarget.value))}
+                onBlur={e => changeEnemyCount(Number(e.currentTarget.value))} />
+              <span className="ctrl-val">{enemyDraft.toLocaleString()}</span>
+            </label>
+          </div>
+
+          <div className="panel control-card">
+            <label className="ctrl-label" htmlFor="collision-mode">
+              Collision:
+              <select id="collision-mode" className="mode-select" value={collisionMode}
+                disabled={!wasmReady}
+                onChange={e => changeCollision(e.target.value as CollisionMode)}>
+                <option value="BruteForce" disabled={enemyCount > 10000}>BruteForce</option>
+                <option value="QuadTree">QuadTree</option>
+                <option value="UniformGrid">UniformGrid</option>
+                <option value="SpatialHash">SpatialHash</option>
+              </select>
+            </label>
+            <label className="ctrl-label" htmlFor="simulation-speed">
+              Speed:
+              <select id="simulation-speed" className="mode-select" value={speedMultiplier}
+                disabled={!wasmReady} onChange={e => changeSpeed(Number(e.target.value))}>
+                <option value={0.25}>0.25×</option>
+                <option value={0.5}>0.5×</option>
+                <option value={1}>1×</option>
+                <option value={2}>2×</option>
+                <option value={4}>4×</option>
+              </select>
+            </label>
+            <button className={`toggle-btn ${memoryMode === 'SoA' ? 'on' : ''}`} onClick={toggleMemory}>
+              Memory: <strong>{memoryMode}</strong>
+            </button>
+          </div>
+
+          <div className="panel control-card">
+            {/* Deliberately NOT styled with the same "on" highlight as the two
+                mode buttons. Those have a fast path and a slow path, so the
+                accent means "the good one". Neither distribution is the good
+                one -- which is the whole point of the axis. */}
+            <button
+              className={`toggle-btn dist-btn ${spawnDist === 'Clustered' ? 'clustered' : ''}`}
+              onClick={toggleDistribution}
+              disabled={!wasmReady}
+              title="Clustered packs the world into 5 blobs; Uniform spreads it evenly. This is what decides whether the QuadTree is worth its build cost."
+            >
+              Spawn: <strong>{spawnDist}</strong>
+            </button>
+            <button
+              className={`toggle-btn pause-btn ${paused ? 'paused' : ''}`}
+              onClick={togglePause}
+              disabled={!wasmReady}
+              title="Space or P"
+            >
+              {paused ? 'Resume' : 'Pause'} <kbd>Space</kbd>
+            </button>
+          </div>
+
+          {safetyNotice && <p className="hud-warn" role="status">{safetyNotice}</p>}
+          {!wasmReady && (
+            <p className="hud-warn">
+              Wasm not loaded &mdash; build core first (<code>make wasm</code>, or <code>.\build-wasm.ps1</code> on Windows)
+            </p>
+          )}
+
           <AgentExperimentPanel logger={loggerRef.current!} collisionMode={collisionMode}
             memoryMode={memoryMode} distribution={spawnDist} speedMultiplier={speedMultiplier}
             onApplyRecommendation={applyRecommendation} />
@@ -576,31 +593,38 @@ function TelemetryBar({ record, count, onDownload }: {
   onDownload: () => void;
 }) {
   return (
-    <div className="telemetry">
-      <div className="telemetry-head">
-        <h3>Logger &mdash; 1 Hz</h3>
-        <button onClick={onDownload} disabled={count === 0}>
+    <section className="panel telemetry">
+      <div className="panel-head">
+        <h3 className="panel-title">Logger &mdash; 1 Hz</h3>
+        <button className="btn btn-ghost" onClick={onDownload} disabled={count === 0}>
           Download .ndjson ({count})
         </button>
       </div>
+      {/* Two independent label/value grids rather than one four-column grid:
+          the timing figures read down the left and the world figures down the
+          right, which is how the two groups are actually compared. */}
       {record ? (
         <div className="telemetry-grid">
-          <span>t</span>            <b>{record.t.toFixed(1)} s</b>
-          <span>fps</span>          <b>{record.fps.toFixed(1)}</b>
-          <span>sim mean/p95</span> <b>{record.simMs.mean.toFixed(2)} / {record.simMs.p95.toFixed(2)} ms</b>
-          <span>sim p99/max</span>  <b>{record.simMs.p99.toFixed(2)} / {record.simMs.max.toFixed(2)} ms</b>
-          <span>frame p95</span>    <b>{record.frameMs.p95.toFixed(2)} ms</b>
-          <span>entities</span>     <b>{record.entities.toLocaleString()} / {record.slots.toLocaleString()}</b>
-          <span>game speed</span>   <b>{record.speedMultiplier}×</b>
-          <span>kills /s</span>     <b>{record.kills}</b>
-          <span>over budget</span>
-          <b className={record.longFrames > 0 ? 'hud-bad' : 'hud-good'}>
-            {record.longFrames}/{record.frames} frames
-          </b>
+          <dl>
+            <dt>t</dt>            <dd>{record.t.toFixed(1)} s</dd>
+            <dt>fps</dt>          <dd>{record.fps.toFixed(1)}</dd>
+            <dt>sim mean/p95</dt> <dd>{record.simMs.mean.toFixed(2)} / {record.simMs.p95.toFixed(2)} ms</dd>
+            <dt>sim p99/max</dt>  <dd>{record.simMs.p99.toFixed(2)} / {record.simMs.max.toFixed(2)} ms</dd>
+            <dt>frame p95</dt>    <dd>{record.frameMs.p95.toFixed(2)} ms</dd>
+          </dl>
+          <dl>
+            <dt>entities</dt>    <dd>{record.entities.toLocaleString()} / {record.slots.toLocaleString()}</dd>
+            <dt>game speed</dt>  <dd>{record.speedMultiplier}×</dd>
+            <dt>kills /s</dt>    <dd>{record.kills}</dd>
+            <dt>over budget</dt>
+            <dd className={record.longFrames > 0 ? 'hud-bad' : 'hud-good'}>
+              {record.longFrames}/{record.frames} frames
+            </dd>
+          </dl>
         </div>
       ) : (
         <p className="telemetry-empty">Collecting first second&hellip;</p>
       )}
-    </div>
+    </section>
   );
 }
