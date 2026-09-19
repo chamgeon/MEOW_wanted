@@ -203,11 +203,12 @@ C++는 JS로 데이터를 직렬화해 넘기지 않습니다. Wasm 힙 안에 �
 ```bash
 cd server
 pip install -r requirements.txt
-cp .env.example .env          # ANTHROPIC_API_KEY 채우기
+cp .env.example .env          #   OPENAI_API_KEY 채우기
 uvicorn main:app --reload --port 8000
 ```
 
-Vite 개발 서버가 `/api`를 `localhost:8000`으로 프록시합니다. `.env`는 gitignore돼 있습니다 — **API 키를 절대 커밋하지 마세요.**
+Vite 개발 서버가 `/api`를 `localhost:8000`으로 프록시합니다. `.env`는 gitignore돼 있습니다 — **OpenAI API 키를 절대 커밋하지 마세요.**
 
 
 > 로컬 세팅이 번거로우면 배포된 인스턴스(`https://meow-ai.p-e.kr/`)를 바로 써도 됩니다. 상태 확인: [`/health`](https://meow-ai.p-e.kr/health) · [`/api/agent-meta`](https://meow-ai.p-e.kr/api/agent-meta)
+
