@@ -77,8 +77,11 @@ Your response must:
    into a prediction about the refactoring.
 4. Emit a recommendation object, parsed by machine to drive a runtime mode
    swap, using the enum spellings verbatim.
+5. Copy the Risk projection finding's numbers (if present above) into
+   riskProjection, in Korean, without changing them. If the finding says
+   no projection was made, state that instead of inventing one.
 
-Language: diagnosis and expectedImpact in KOREAN. Keep technical terms with no
+Language: diagnosis, expectedImpact and riskProjection in KOREAN. Keep technical terms with no
 settled Korean form in English inside the Korean sentence (cache line, prefetch,
 SoA, AoS, QuadTree, p95, branch misprediction, SIMD), and keep every number,
 unit and metric name exactly as the telemetry writes it - "sim_p95" stays
@@ -95,6 +98,7 @@ comments, no NaN/Infinity.
   "diagnosis":      "<Korean. Root cause, citing numbers from the series.>",
   "snippet":        "<C++ refactoring. Compilable fragment, not a diff.>",
   "expectedImpact": "<Korean. What it changes and which way cost moves. No invented figures.>",
+  "riskProjection":  "<Korean, one sentence. Restate the Risk projection finding above (projected value, 90% interval, probability) using its numbers verbatim. If none was made, say so.>",
   "recommendation": {
     "collision":  "BruteForce" | "QuadTree" | "UniformGrid" | "SpatialHash",
     "memory":     "AoS" | "SoA",
