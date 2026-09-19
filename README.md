@@ -26,7 +26,7 @@ C++ 시뮬레이션 코어를 WebAssembly로 컴파일해 브라우저에서 **�
 | **Git** | emsdk 설치에 필요 | 필수 |
 | C++ 컴파일러 (MSVC / gcc / clang) + CMake | 네이티브 벤치마크 `core_bench` | 선택 |
 
-> Wasm 산출물(`web/public/core_engine.js`, `.wasm`)은 저장소에 커밋돼 있지 않습니다. 각자 한 번 빌드해야 합니다.
+> Wasm 산출물(`web/public/core_engine.js`, `.wasm`)은 Vercel 배포를 위해 저장소에 커밋돼 있습니다(Vercel 빌드 환경엔 Emscripten이 없기 때문). C++ 코드를 직접 수정하지 않았다면 아래 4단계(빌드)를 건너뛰어도 되고, 수정했다면 다시 빌드한 뒤 결과물을 커밋해야 배포에 반영됩니다.
 
 ---
 
