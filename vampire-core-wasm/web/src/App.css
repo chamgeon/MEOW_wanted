@@ -205,7 +205,8 @@ kbd {
 }
 .title-card h1 { font-size: 1.05rem; white-space: nowrap; }
 .title-card h1 .subtitle {
-  color: var(--text2); font-weight: 400; font-size: .78rem; margin-left: .45rem;
+  color: var(--accent); font-weight: 600; font-size: 1.05rem;
+  margin-left: .55rem; letter-spacing: -.01em;
 }
 
 .control-card {

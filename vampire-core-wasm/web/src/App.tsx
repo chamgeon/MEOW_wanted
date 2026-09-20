@@ -495,7 +495,7 @@ export default function App() {
           )}
 
           <div className="panel title-card">
-            <h1>Vampire-Core Wasm <span className="subtitle">Performance Tech Demo</span></h1>
+            <h1>Vampire-Core Wasm <span className="subtitle">실시간 대규모 시뮬레이션 최적화</span></h1>
             <label className="ctrl-label">
               Enemies
               <input type="range" min={500} max={100000} step={500} value={enemyDraft}
