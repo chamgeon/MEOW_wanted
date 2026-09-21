@@ -392,7 +392,8 @@ async def _plan(req: OptimizationJobRequest, observations: dict, findings: list[
         client = openai.AsyncOpenAI(api_key=key, timeout=35)
         response = await client.responses.create(
             model=os.environ.get("AGENT_MODEL", "gpt-4.1-mini"),
-            max_output_tokens=650,
+            # Sized for a reasoning model.
+            max_output_tokens=3000,
             instructions=("You are a C++ game performance advisor. Read the real active source, "
                           "observations and findings. Return JSON only: "
                           "{\"candidates\":[IDs in priority order],"
