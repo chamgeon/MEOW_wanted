@@ -455,8 +455,31 @@ kbd {
 /* Below the design's desktop target the two columns stop fitting side by side;
    stacking keeps the canvas usable instead of squeezing it to a strip. */
 @media (max-width: 1100px) {
-  .app { overflow: auto; }
+  /* Scroll the document, not a box inside it. The desktop layout pins .app to
+     the viewport so the two columns can scroll independently; once they are
+     stacked there is only one thing to scroll, and keeping it in an inner
+     overflow box is what stops a phone from hiding its URL bar on scroll. */
+  .app { height: auto; overflow: visible; }
   .app-grid { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
-  .stage { min-height: 52vh; }
   .side-col { overflow: visible; }
+
+  /* The stage column's children divide a fixed column height on desktop
+     (1.65 : 0.6, see .stage). Stacked, the column has no height to divide:
+     every ratio resolves against a zero basis, so .metric-graph collapsed to
+     the height of its two titles and painted its charts straight over the
+     telemetry panel below. Each child gets its own height here instead of a
+     share of the column's. */
+  .stage { flex: none; height: 52vh; min-height: 300px; }
+  .metric-graph { flex: none; }
+  .chart-block { flex: none; }
+  /* flex:none as well as a height: ResponsiveContainer measures this box, and
+     a bare height loses to the flex-basis:0 that .chart-box's flex:1 sets. */
+  .chart-box { flex: none; height: 110px; }
+}
+
+/* Phone widths. The column is now narrower than the two-up telemetry table was
+   designed for, and 1.5rem of page padding is a sixth of the screen. */
+@media (max-width: 560px) {
+  .app-grid { padding: .5rem; gap: .5rem; }
+  .telemetry-grid { grid-template-columns: 1fr; gap: .25rem; }
 }

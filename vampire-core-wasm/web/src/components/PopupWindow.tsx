@@ -51,6 +51,17 @@ function cloneStyles(target: Window): void {
   const meta = target.document.createElement('meta');
   meta.setAttribute('charset', 'utf-8');
   head.appendChild(meta);
+
+  // This window is a document we build, not one we navigate to, so it inherits
+  // nothing from index.html -- including its <meta viewport>. Without one a
+  // phone lays the report out at the ~980px legacy fallback width and then
+  // scales it down to fit the screen, which renders the whole thing at about
+  // 40%: the benchmark tables come out around 5px tall. Desktop browsers
+  // ignore the tag, so the popup's own layout is unchanged there.
+  const viewport = target.document.createElement('meta');
+  viewport.setAttribute('name', 'viewport');
+  viewport.setAttribute('content', 'width=device-width, initial-scale=1.0');
+  head.appendChild(viewport);
 }
 
 export function usePopupWindow(
